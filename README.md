@@ -52,10 +52,6 @@ The script runs on:
 https://www.playtidefall.com/*
 ```
 
-## Updating
-
-Replace your installed userscript with the newest `.user.js` file and refresh Tidefall.
-
 ## Notes
 
 * Tidefall First Mate is an unofficial community userscript.
