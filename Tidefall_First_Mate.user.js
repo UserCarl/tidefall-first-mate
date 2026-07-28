@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.1
-// @description  Combat tracker, combat warnings, cannon durability, activity tracker, queue remaining time, mastery-aware item rates, market pricing, and First Mate's Settings
+// @version      1.1.1
+// @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
 // @downloadURL  https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -5125,6 +5125,47 @@
             : null;
     }
 
+    function getCurrentTaskRemainingSeconds() {
+        const cyclesLeft =
+            getActivityCyclesLeft();
+
+        if (
+            cyclesLeft === null ||
+            cyclesLeft <= 0 ||
+            !Number.isFinite(
+                activityCycleSeconds
+            ) ||
+            activityCycleSeconds <= 0
+        ) {
+            return 0;
+        }
+
+        /*
+         * #task-cycles-left includes the cycle currently in
+         * progress. Use the live cycle countdown for that first
+         * cycle, then add full cycle lengths for everything after.
+         */
+        const currentCountdown =
+            getActivityCycleCountdown();
+
+        const firstCycleSeconds =
+            Number.isFinite(
+                currentCountdown
+            ) &&
+            currentCountdown >= 0
+                ? currentCountdown
+                : activityCycleSeconds;
+
+        return (
+            firstCycleSeconds +
+            Math.max(
+                0,
+                cyclesLeft - 1
+            ) *
+            activityCycleSeconds
+        );
+    }
+
     function getQueueRemainingEstimate() {
         hydrateQueueRowsIfNeeded();
 
@@ -5165,11 +5206,15 @@
             return null;
         }
 
-        let totalSeconds = 0;
+        let totalSeconds =
+            getCurrentTaskRemainingSeconds();
+
         let usedFallback = false;
         let foundCycles = false;
 
-        const signatureParts = [];
+        const signatureParts = [
+            `current:${getActivityCyclesLeft() ?? 0}:${activityCycleSeconds ?? 0}`
+        ];
 
         rows.forEach(row => {
             const cycles =
@@ -5211,8 +5256,11 @@
                     cycles *
                     secondsPerCycle;
 
+                const queueId =
+                    row.dataset.queueId || '';
+
                 signatureParts.push(
-                    `${normalizeActivityKeyPart(taskName)}:${cycles}:${secondsPerCycle}`
+                    `${queueId}:${normalizeActivityKeyPart(taskName)}:${cycles}:${secondsPerCycle}`
                 );
             }
         });
@@ -5307,6 +5355,25 @@
                 queueCountdownBaseSeconds -
                     elapsedSeconds
             );
+
+        if (remainingSeconds <= 0) {
+            activityQueueRow.style.display =
+                'none';
+
+            activityQueueRemainingElement.textContent =
+                '—';
+
+            /*
+             * The old queue row can remain in Tidefall's DOM
+             * briefly after it finishes. Allow First Mate to
+             * hydrate/read the queue again so a newly-added
+             * queue is detected immediately.
+             */
+            queueHydratedOnce =
+                false;
+
+            return;
+        }
 
         activityQueueRow.style.display =
             'grid';
