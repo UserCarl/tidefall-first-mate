@@ -41,17 +41,15 @@ All options are available from the **First Mate's Settings** tab in Tidefall's a
 
 ## Installation
 
-1. Install a userscript manager such as Tampermonkey.
-2. Download `Tidefall\_First\_Mate\_1.0\_GitHub.user.js`.
-3. Open Tampermonkey.
-4. Import the downloaded `.user.js` file, or create a new userscript and paste in the file contents.
-5. Save the script.
-6. Open or refresh Tidefall.
+1. Install a userscript manager such as Tampermonkey.https://www.tampermonkey.net/
+2. Open `Tidefall\_First\_Mate\_1.0\_GitHub.user.js`.
+3. Click "Raw" in the top right.
+4. Click install.
+5. Open or refresh Tidefall.
 
 The script runs on:
-
 ```text
-https://www.playtidefall.com/\*
+https://www.playtidefall.com/*
 ```
 
 ## Updating
