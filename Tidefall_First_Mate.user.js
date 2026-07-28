@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.1.1
+// @version      1.2
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -45,6 +45,8 @@
 
         activityTrackerEnabled: true,
         activityLevelMode: 'actions',
+        activitySessionLayout: 'header',
+        combatSessionLayout: 'header',
         activityQueueRemaining: true,
 
         cannonDurabilityEnabled: true,
@@ -1254,6 +1256,180 @@
 
         .tf-carl-card-dependent-disabled {
             opacity: .35;
+        }
+
+        #tf-activity-header-layout {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+
+            z-index: 5;
+
+            display: none;
+            align-items: center;
+            justify-content: center;
+
+            gap: 10px;
+
+            height: 40px;
+            max-width: calc(100% - 760px);
+
+            padding: 0 10px;
+
+            color: var(--text-primary, #e8e0d0);
+            font-family: var(--font-body, "Gothic A1", sans-serif);
+
+            white-space: nowrap;
+            pointer-events: none;
+        }
+
+        #tf-activity-header-layout.tf-active {
+            display: flex;
+        }
+
+        .tf-activity-header-title {
+            color: var(--gold, #c5a059);
+            font-family: var(--font-heading, "QuadraatOffcPro", Georgia, serif);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            opacity: .9;
+        }
+
+        .tf-activity-header-stat {
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+
+            padding-left: 9px;
+
+            border-left:
+                1px solid rgba(197, 160, 89, .18);
+        }
+
+        .tf-activity-header-label {
+            color: var(--text-secondary, #d4be8ca6);
+            font-size: 9px;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+        }
+
+        .tf-activity-header-value {
+            color: var(--reward-xp, #aee67a);
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .tf-activity-header-stat[data-kind="queue"] .tf-activity-header-value,
+        .tf-activity-header-stat[data-kind="elapsed"] .tf-activity-header-value {
+            color: var(--text-primary, #e8e0d0);
+        }
+
+        .tf-activity-header-task {
+            max-width: 180px;
+
+            overflow: hidden;
+            text-overflow: ellipsis;
+
+            color: var(--text-secondary, #d4be8ca6);
+
+            font-size: 10px;
+        }
+
+
+        #tf-combat-header-layout {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 6;
+
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+
+            height: 40px;
+            max-width: calc(100% - 760px);
+            padding: 0 10px;
+
+            color: var(--text-primary, #e8e0d0);
+            font-family: var(--font-body, "Gothic A1", sans-serif);
+            white-space: nowrap;
+            pointer-events: none;
+        }
+
+        #tf-combat-header-layout.tf-active {
+            display: flex;
+        }
+
+        .tf-combat-header-title {
+            color: var(--gold, #c5a059);
+            font-family: var(--font-heading, "QuadraatOffcPro", Georgia, serif);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+        }
+
+        .tf-combat-header-stat {
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+            padding-left: 9px;
+            border-left: 1px solid rgba(197, 160, 89, .18);
+        }
+
+        .tf-combat-header-label {
+            color: var(--text-secondary, #d4be8ca6);
+            font-size: 9px;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+        }
+
+        .tf-combat-header-value {
+            color: var(--reward-xp, #aee67a);
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .tf-combat-header-stat[data-kind="kills"] .tf-combat-header-value {
+            color: var(--combat-victory, #e0c36a);
+        }
+
+        .tf-combat-header-stat[data-kind="gold"] .tf-combat-header-value {
+            color: var(--reward-gold, #f0c45c);
+        }
+
+        @media (max-width: 1700px) {
+            #tf-activity-header-layout {
+                max-width: calc(100% - 650px);
+                gap: 7px;
+            }
+
+            .tf-activity-header-task {
+                display: none;
+            }
+        }
+
+        @media (max-width: 1450px) {
+            .tf-activity-header-stat[data-kind="elapsed"] {
+                display: none;
+            }
+        }
+
+        @media (max-width: 1300px) {
+            .tf-activity-header-title {
+                display: none;
+            }
+        }
+
+        @media (max-width: 1150px) {
+            .tf-activity-header-stat[data-kind="items"] {
+                display: none;
+            }
         }
     `;
 
@@ -3471,6 +3647,8 @@
 
         netGoldElement.textContent =
             net.toLocaleString();
+
+        updateCombatHeaderLayout();
     }
 
     function updateCombatButton() {
@@ -3578,7 +3756,10 @@
             initializeItemTracking();
 
             combatPanel.style.display =
-                'block';
+                settings.combatSessionLayout ===
+                    'header'
+                    ? 'none'
+                    : 'block';
 
             combatStatusElement.textContent =
                 'Tracking combat...';
@@ -3634,7 +3815,10 @@
                 initializeItemTracking();
 
                 combatPanel.style.display =
-                    'block';
+                    settings.combatSessionLayout ===
+                        'header'
+                        ? 'none'
+                        : 'block';
             }
 
             updateCombatButton();
@@ -5419,6 +5603,18 @@
             return;
         }
 
+        if (
+            settings.activitySessionLayout ===
+                'header'
+        ) {
+            activityPanel.style.display =
+                'none';
+
+            updateActivityHeaderLayout();
+
+            return;
+        }
+
         activityPanel.style.display =
             'block';
 
@@ -5478,6 +5674,8 @@
 
         activitySkillElement.textContent =
             `${titleCaseSkill(activitySkill)} • ${activityTaskName}`;
+
+        updateActivityHeaderLayout();
     }
 
     // =========================================================
@@ -5501,6 +5699,11 @@
         if (!activity) {
             activityPanel.style.display =
                 'none';
+
+            activityHeaderLayout
+                ?.classList.remove(
+                    'tf-active'
+                );
 
             return;
         }
@@ -6082,6 +6285,505 @@
     }
 
     // =========================================================
+    // COMBAT HEADER LAYOUT
+    // =========================================================
+
+    let combatHeaderLayout =
+        null;
+
+    function buildCombatHeaderLayout() {
+        if (combatHeaderLayout) {
+            return combatHeaderLayout;
+        }
+
+        const bar =
+            document.createElement('div');
+
+        bar.id =
+            'tf-combat-header-layout';
+
+        bar.innerHTML = `
+            <span class="tf-combat-header-title">
+                PvE
+            </span>
+
+            <span class="tf-combat-header-stat" data-kind="kills">
+                <span class="tf-combat-header-label">Kills</span>
+                <span id="tf-header-combat-kills" class="tf-combat-header-value">0</span>
+            </span>
+
+            <span class="tf-combat-header-stat" data-kind="xp">
+                <span class="tf-combat-header-label">XP Gained</span>
+                <span id="tf-header-combat-xp" class="tf-combat-header-value">0</span>
+            </span>
+
+            <span class="tf-combat-header-stat" data-kind="level">
+                <span id="tf-header-combat-level-label" class="tf-combat-header-label">Kills to Level</span>
+                <span id="tf-header-combat-level" class="tf-combat-header-value">—</span>
+            </span>
+
+            <span class="tf-combat-header-stat" data-kind="gold">
+                <span class="tf-combat-header-label">Net Gold</span>
+                <span id="tf-header-combat-gold" class="tf-combat-header-value">0</span>
+            </span>
+        `;
+
+        combatHeaderLayout =
+            bar;
+
+        return bar;
+    }
+
+    function mountCombatHeaderLayout() {
+        const bar =
+            buildCombatHeaderLayout();
+
+        const header =
+            findTidefallTopHeader();
+
+        if (!header) {
+            return false;
+        }
+
+        if (
+            window.getComputedStyle(header)
+                .position === 'static'
+        ) {
+            header.style.position =
+                'relative';
+        }
+
+        if (bar.parentElement !== header) {
+            header.appendChild(bar);
+        }
+
+        return true;
+    }
+
+    function updateCombatHeaderLayout() {
+        if (
+            settings.combatSessionLayout !==
+                'header' ||
+            !settings.combatTrackerEnabled
+        ) {
+            combatHeaderLayout
+                ?.classList.remove('tf-active');
+
+            updateActivityHeaderLayout();
+
+            return;
+        }
+
+        if (!mountCombatHeaderLayout()) {
+            return;
+        }
+
+        const combatActive =
+            isActuallyInCombat();
+
+        combatHeaderLayout.classList.toggle(
+            'tf-active',
+            combatActive
+        );
+
+        /*
+         * Combat has priority over Activity only while the ship
+         * is actually fighting. The PvE session itself can keep
+         * running in the background between fights.
+         */
+        updateActivityHeaderLayout();
+
+        if (!combatActive) {
+            return;
+        }
+
+        const level =
+            getSkillLevel('gunnery');
+
+        const killsRemaining =
+            getKillsToLevel();
+
+        const net =
+            Math.round(
+                combatGrossGold -
+                getConsumableCost()
+            );
+
+        combatHeaderLayout.querySelector(
+            '#tf-header-combat-kills'
+        ).textContent =
+            combatKills.toLocaleString();
+
+        combatHeaderLayout.querySelector(
+            '#tf-header-combat-xp'
+        ).textContent =
+            combatTotalXP.toLocaleString();
+
+        combatHeaderLayout.querySelector(
+            '#tf-header-combat-level-label'
+        ).textContent =
+            level !== null
+                ? `Kills to Level ${level + 1}`
+                : 'Kills to Level';
+
+        combatHeaderLayout.querySelector(
+            '#tf-header-combat-level'
+        ).textContent =
+            killsRemaining === null
+                ? '—'
+                : killsRemaining.toLocaleString();
+
+        combatHeaderLayout.querySelector(
+            '#tf-header-combat-gold'
+        ).textContent =
+            net.toLocaleString();
+    }
+
+    function applyCombatSessionLayout() {
+        if (
+            settings.combatSessionLayout ===
+                'header'
+        ) {
+            combatPanel.style.display =
+                'none';
+
+            updateCombatHeaderLayout();
+        } else {
+            combatHeaderLayout
+                ?.classList.remove('tf-active');
+
+            if (
+                combatRunning &&
+                settings.combatTrackerEnabled
+            ) {
+                combatPanel.style.display =
+                    'block';
+            }
+
+            updateActivityHeaderLayout();
+        }
+    }
+
+    // =========================================================
+    // ACTIVITY HEADER LAYOUT
+    // =========================================================
+
+    let activityHeaderLayout =
+        null;
+
+    function findTidefallTopHeader() {
+        const candidates =
+            Array.from(
+                document.querySelectorAll(
+                    'header, nav, body > div, body > section'
+                )
+            );
+
+        return candidates.find(
+            element => {
+                const text =
+                    element.textContent
+                        ?.replace(/\s+/g, ' ')
+                        .trim()
+                        .toUpperCase() || '';
+
+                if (
+                    !text.includes(
+                        'SAILORS ONLINE'
+                    ) ||
+                    !text.includes(
+                        'SAILED TODAY'
+                    )
+                ) {
+                    return false;
+                }
+
+                const rect =
+                    element.getBoundingClientRect();
+
+                return (
+                    rect.top <= 5 &&
+                    rect.height > 30 &&
+                    rect.height < 120 &&
+                    rect.width >
+                        window.innerWidth * .7
+                );
+            }
+        ) || null;
+    }
+
+    function buildActivityHeaderLayout() {
+        if (activityHeaderLayout) {
+            return activityHeaderLayout;
+        }
+
+        const bar =
+            document.createElement(
+                'div'
+            );
+
+        bar.id =
+            'tf-activity-header-layout';
+
+        bar.innerHTML = `
+            <span class="tf-activity-header-title">
+                Activity
+            </span>
+
+            <span class="tf-activity-header-stat" data-kind="xp">
+                <span class="tf-activity-header-label">XP/H</span>
+                <span id="tf-header-xp" class="tf-activity-header-value">—</span>
+            </span>
+
+            <span class="tf-activity-header-stat" data-kind="items">
+                <span class="tf-activity-header-label">Items/H</span>
+                <span id="tf-header-items" class="tf-activity-header-value">—</span>
+            </span>
+
+            <span class="tf-activity-header-stat" data-kind="level">
+                <span id="tf-header-level-label" class="tf-activity-header-label">To Level</span>
+                <span id="tf-header-level" class="tf-activity-header-value">—</span>
+            </span>
+
+            <span class="tf-activity-header-stat" data-kind="queue">
+                <span class="tf-activity-header-label">Queue</span>
+                <span id="tf-header-queue" class="tf-activity-header-value">—</span>
+            </span>
+
+            <span class="tf-activity-header-stat" data-kind="elapsed">
+                <span class="tf-activity-header-label">Elapsed</span>
+                <span id="tf-header-elapsed" class="tf-activity-header-value">—</span>
+            </span>
+
+            <span id="tf-header-task" class="tf-activity-header-task"></span>
+        `;
+
+        activityHeaderLayout =
+            bar;
+
+        return bar;
+    }
+
+    function mountActivityHeaderLayout() {
+        const bar =
+            buildActivityHeaderLayout();
+
+        const header =
+            findTidefallTopHeader();
+
+        if (!header) {
+            return false;
+        }
+
+        if (
+            window.getComputedStyle(
+                header
+            ).position === 'static'
+        ) {
+            header.style.position =
+                'relative';
+        }
+
+        if (
+            bar.parentElement !==
+            header
+        ) {
+            header.appendChild(
+                bar
+            );
+        }
+
+        return true;
+    }
+
+    function updateActivityHeaderLayout() {
+        if (
+            settings.activitySessionLayout !==
+                'header'
+        ) {
+            activityHeaderLayout
+                ?.classList.remove(
+                    'tf-active'
+                );
+
+            return;
+        }
+
+        if (!mountActivityHeaderLayout()) {
+            return;
+        }
+
+        const combatHasHeaderPriority =
+            settings.combatSessionLayout ===
+                'header' &&
+            settings.combatTrackerEnabled &&
+            isActuallyInCombat();
+
+        /*
+         * Only show the Activity header while Tidefall's
+         * currently-running task still matches the activity
+         * session being tracked. Navigation can temporarily
+         * replace/remove the active-task DOM, and the periodic
+         * header refresh used to re-show stale Activity data,
+         * which caused the header to blink.
+         */
+        const currentActivity =
+            getCurrentActivity();
+
+        const activityStillActive =
+            Boolean(
+                currentActivity &&
+                currentActivity.skill ===
+                    activitySkill &&
+                currentActivity.taskName ===
+                    activityTaskName
+            );
+
+        const visible =
+            settings.activityTrackerEnabled &&
+            activityStarted &&
+            activityActions > 0 &&
+            !activityPanelClosed &&
+            activityStillActive &&
+            !combatHasHeaderPriority;
+
+        activityHeaderLayout.classList.toggle(
+            'tf-active',
+            visible
+        );
+
+        if (!visible) {
+            return;
+        }
+
+        const xp =
+            activityEstimatedXPPerHour ===
+                null
+                ? '—'
+                : Math.round(
+                    activityEstimatedXPPerHour
+                ).toLocaleString();
+
+        const items =
+            activityEstimatedItemsPerHour ===
+                null
+                ? '—'
+                : Math.round(
+                    activityEstimatedItemsPerHour
+                ).toLocaleString();
+
+        const nextLevel =
+            activityEstimatedNextLevel;
+
+        const levelValue =
+            settings.activityLevelMode ===
+                'time'
+                ? (
+                    activityEstimatedTimeToLevel ===
+                        null
+                        ? '—'
+                        : formatDuration(
+                            activityEstimatedTimeToLevel
+                        )
+                )
+                : (
+                    activityEstimatedActionsToLevel ===
+                        null
+                        ? '—'
+                        : activityEstimatedActionsToLevel
+                            .toLocaleString()
+                );
+
+        const queueEstimate =
+            getQueueRemainingEstimate();
+
+        const queueText =
+            queueEstimate
+                ? activityQueueRemainingElement
+                    .textContent
+                : '—';
+
+        activityHeaderLayout.querySelector(
+            '#tf-header-xp'
+        ).textContent =
+            xp;
+
+        activityHeaderLayout.querySelector(
+            '#tf-header-items'
+        ).textContent =
+            items;
+
+        activityHeaderLayout.querySelector(
+            '#tf-header-level-label'
+        ).textContent =
+            settings.activityLevelMode ===
+                'time'
+                ? (
+                    nextLevel !== null
+                        ? `Time to Level ${nextLevel}`
+                        : 'Time to Level'
+                )
+                : (
+                    nextLevel !== null
+                        ? `Actions to Level ${nextLevel}`
+                        : 'Actions to Level'
+                );
+
+        activityHeaderLayout.querySelector(
+            '#tf-header-level'
+        ).textContent =
+            levelValue;
+
+        const queueStat =
+            activityHeaderLayout.querySelector(
+                '[data-kind="queue"]'
+            );
+
+        queueStat.style.display =
+            settings.activityQueueRemaining &&
+            queueEstimate
+                ? 'flex'
+                : 'none';
+
+        activityHeaderLayout.querySelector(
+            '#tf-header-queue'
+        ).textContent =
+            queueText;
+
+        activityHeaderLayout.querySelector(
+            '#tf-header-elapsed'
+        ).textContent =
+            formatDuration(
+                getActivityElapsedSeconds()
+            );
+
+        activityHeaderLayout.querySelector(
+            '#tf-header-task'
+        ).textContent =
+            `${titleCaseSkill(activitySkill)} • ${activityTaskName}`;
+    }
+
+    function applyActivitySessionLayout() {
+        const headerMode =
+            settings.activitySessionLayout ===
+                'header';
+
+        if (headerMode) {
+            activityPanel.style.display =
+                'none';
+
+            updateActivityHeaderLayout();
+        } else {
+            activityHeaderLayout
+                ?.classList.remove(
+                    'tf-active'
+                );
+
+            updateActivityDisplay();
+        }
+    }
+
+    // =========================================================
     // SETTINGS UI
     // =========================================================
 
@@ -6390,6 +7092,20 @@
                 ) {
                     refreshCannonDurabilityDisplay();
                 }
+
+                if (
+                    settingKey ===
+                    'activitySessionLayout'
+                ) {
+                    applyActivitySessionLayout();
+                }
+
+                if (
+                    settingKey ===
+                    'combatSessionLayout'
+                ) {
+                    applyCombatSessionLayout();
+                }
             }
         );
 
@@ -6655,10 +7371,60 @@
                     'Combat Tracker',
 
                 description:
-                    'Track PvE kills, XP, Gunnery level progress, and net session gold.',
+                    'Track PvE kills, XP, Gunnery level progress, and net session gold. Header mode takes priority over Activity while combat is active.',
 
                 toggleKey:
-                    'combatTrackerEnabled'
+                    'combatTrackerEnabled',
+
+                extraContent:
+                    cardBody => {
+                        const row =
+                            document.createElement(
+                                'div'
+                            );
+
+                        row.className =
+                            'tf-carl-select-row';
+
+                        row.dataset.parentToggle =
+                            'combatTrackerEnabled';
+
+                        const label =
+                            document.createElement(
+                                'span'
+                            );
+
+                        label.className =
+                            'tf-carl-setting-label';
+
+                        label.textContent =
+                            'Session Layout';
+
+                        row.append(
+                            label,
+                            createSelect(
+                                'combatSessionLayout',
+                                [
+                                    {
+                                        value:
+                                            'header',
+                                        label:
+                                            'Header'
+                                    },
+                                    {
+                                        value:
+                                            'standard',
+                                        label:
+                                            'Floating Panel'
+                                    }
+                                ]
+                            )
+                        );
+
+                        cardBody.appendChild(
+                            row
+                        );
+                    }
             })
         );
 
@@ -6860,7 +7626,7 @@
                     'Activity Tracker',
 
                 description:
-                    'Track non-combat XP, actual mastery-adjusted item output, and next-level progress.',
+                    'Track non-combat XP, actual mastery-adjusted item output, and next-level progress. Header mode automatically returns after combat ends.',
 
                 toggleKey:
                     'activityTrackerEnabled',
@@ -6914,6 +7680,54 @@
 
                         cardBody.appendChild(
                             row
+                        );
+
+                        const layoutRow =
+                            document.createElement(
+                                'div'
+                            );
+
+                        layoutRow.className =
+                            'tf-carl-select-row';
+
+                        layoutRow.dataset
+                            .parentToggle =
+                            'activityTrackerEnabled';
+
+                        const layoutLabel =
+                            document.createElement(
+                                'span'
+                            );
+
+                        layoutLabel.className =
+                            'tf-carl-setting-label';
+
+                        layoutLabel.textContent =
+                            'Session Layout';
+
+                        layoutRow.append(
+                            layoutLabel,
+                            createSelect(
+                                'activitySessionLayout',
+                                [
+                                    {
+                                        value:
+                                            'header',
+                                        label:
+                                            'Header'
+                                    },
+                                    {
+                                        value:
+                                            'standard',
+                                        label:
+                                            'Floating Panel'
+                                    }
+                                ]
+                            )
+                        );
+
+                        cardBody.appendChild(
+                            layoutRow
                         );
                     }
             })
@@ -7376,6 +8190,8 @@
         updateCombatDisplay();
 
         updateActivityDisplay();
+        applyActivitySessionLayout();
+        applyCombatSessionLayout();
     }
 
     // =========================================================
@@ -7665,6 +8481,16 @@
     setInterval(
         scanActivity,
         ACTIVITY_SCAN_INTERVAL
+    );
+
+    setInterval(
+        updateActivityHeaderLayout,
+        1000
+    );
+
+    setInterval(
+        updateCombatHeaderLayout,
+        1000
     );
 
     setInterval(
