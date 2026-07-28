@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Tidefall First Mate
-// @namespace    tidefall-carl-tools
+// @namespace    tidefall-first-mate
 // @version      1.0
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
