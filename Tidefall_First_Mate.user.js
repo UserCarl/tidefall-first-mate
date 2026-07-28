@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.0
-// @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
+// @version      1.1
+// @description  Combat tracker, combat warnings, cannon durability, activity tracker, queue remaining time, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
 // @downloadURL  https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -45,6 +45,7 @@
 
         activityTrackerEnabled: true,
         activityLevelMode: 'actions',
+        activityQueueRemaining: true,
 
         cannonDurabilityEnabled: true,
         cannonDurabilityMode: 'percent',
@@ -1632,6 +1633,23 @@
                 </span>
             </div>
 
+            <div
+                id="tf-activity-queue-row"
+                class="tf-stat-row"
+                style="display: none;"
+            >
+                <span class="tf-stat-label">
+                    Queue Remaining
+                </span>
+
+                <span
+                    id="tf-activity-queue-remaining"
+                    class="tf-stat-value"
+                >
+                    —
+                </span>
+            </div>
+
             <div class="tf-stat-row">
                 <span class="tf-stat-label">
                     Elapsed
@@ -1703,6 +1721,16 @@
     const activityLevelValue =
         activityPanel.querySelector(
             '#tf-activity-level-value'
+        );
+
+    const activityQueueRow =
+        activityPanel.querySelector(
+            '#tf-activity-queue-row'
+        );
+
+    const activityQueueRemainingElement =
+        activityPanel.querySelector(
+            '#tf-activity-queue-remaining'
         );
 
     const activityElapsedElement =
@@ -4903,6 +4931,393 @@
     }
 
     // =========================================================
+    // ACTIVITY QUEUE REMAINING
+    // =========================================================
+
+    let queueHydrationInProgress =
+        false;
+
+    let queueHydratedOnce =
+        false;
+
+    let queueCountdownSignature =
+        '';
+
+    let queueCountdownBaseSeconds =
+        0;
+
+    let queueCountdownStartedAt =
+        0;
+
+    let queueCountdownApproximate =
+        false;
+
+    function getQueuedActivityRows() {
+        return Array.from(
+            document.querySelectorAll(
+                '#task-queue-popover .activity-queue-row'
+            )
+        );
+    }
+
+    function hydrateQueueRowsIfNeeded() {
+        if (
+            queueHydrationInProgress ||
+            queueHydratedOnce
+        ) {
+            return;
+        }
+
+        const badge =
+            document.querySelector(
+                '#task-queue-badge'
+            );
+
+        const queueCount =
+            numberFromText(
+                badge?.textContent
+            );
+
+        if (
+            !badge ||
+            badge.hidden ||
+            queueCount <= 0
+        ) {
+            return;
+        }
+
+        if (
+            getQueuedActivityRows().length > 0
+        ) {
+            queueHydratedOnce =
+                true;
+
+            return;
+        }
+
+        const button =
+            document.querySelector(
+                '#task-queue-btn'
+            );
+
+        if (!(button instanceof HTMLElement)) {
+            return;
+        }
+
+        queueHydrationInProgress =
+            true;
+
+        const wasOpen =
+            button.dataset.open ===
+                'true';
+
+        /*
+         * Tidefall may not build the queue row DOM until the
+         * queue popover is opened once after a page refresh.
+         * Open it briefly so Tidefall renders the rows, then
+         * close it again if First Mate opened it.
+         */
+        if (!wasOpen) {
+            button.click();
+        }
+
+        setTimeout(
+            () => {
+                if (
+                    getQueuedActivityRows().length >
+                    0
+                ) {
+                    queueHydratedOnce =
+                        true;
+                }
+
+                if (
+                    !wasOpen &&
+                    button.dataset.open ===
+                        'true'
+                ) {
+                    button.click();
+                }
+
+                queueHydrationInProgress =
+                    false;
+
+                updateQueueRemainingDisplay();
+            },
+            150
+        );
+    }
+
+    function getQueuedCycleCount(row) {
+        const text =
+            row?.querySelector(
+                '.activity-queue-row__sub'
+            )?.textContent
+                ?.replace(/,/g, '')
+                .trim() || '';
+
+        const match =
+            text.match(/(\d+)\s+cycles?/i);
+
+        return match
+            ? Number(match[1])
+            : 0;
+    }
+
+    function getQueuedTaskName(row) {
+        return row?.querySelector(
+            '.activity-queue-row__name'
+        )?.textContent
+            ?.replace(/\s+/g, ' ')
+            .trim() || '';
+    }
+
+    function getHistoricalCycleSecondsForTask(taskName) {
+        const target =
+            normalizeActivityKeyPart(
+                taskName
+            );
+
+        if (!target) {
+            return null;
+        }
+
+        let best = null;
+
+        Object.values(activityHistory)
+            .forEach(record => {
+                if (
+                    !record ||
+                    typeof record !== 'object'
+                ) {
+                    return;
+                }
+
+                const sameTask =
+                    normalizeActivityKeyPart(
+                        record.taskName
+                    ) === target;
+
+                const seconds =
+                    Number(
+                        record.cycleSeconds
+                    );
+
+                if (
+                    !sameTask ||
+                    !Number.isFinite(seconds) ||
+                    seconds <= 0
+                ) {
+                    return;
+                }
+
+                if (
+                    !best ||
+                    Number(record.updated || 0) >
+                    Number(best.updated || 0)
+                ) {
+                    best = record;
+                }
+            });
+
+        return best
+            ? Number(best.cycleSeconds)
+            : null;
+    }
+
+    function getQueueRemainingEstimate() {
+        hydrateQueueRowsIfNeeded();
+
+        const badge =
+            document.querySelector(
+                '#task-queue-badge'
+            );
+
+        const queueCount =
+            numberFromText(
+                badge?.textContent
+            );
+
+        if (
+            !badge ||
+            badge.hidden ||
+            queueCount <= 0
+        ) {
+            queueHydratedOnce =
+                false;
+
+            queueCountdownSignature =
+                '';
+
+            queueCountdownBaseSeconds =
+                0;
+
+            queueCountdownStartedAt =
+                0;
+
+            return null;
+        }
+
+        const rows =
+            getQueuedActivityRows();
+
+        if (rows.length === 0) {
+            return null;
+        }
+
+        let totalSeconds = 0;
+        let usedFallback = false;
+        let foundCycles = false;
+
+        const signatureParts = [];
+
+        rows.forEach(row => {
+            const cycles =
+                getQueuedCycleCount(row);
+
+            if (cycles <= 0) {
+                return;
+            }
+
+            foundCycles = true;
+
+            const taskName =
+                getQueuedTaskName(row);
+
+            let secondsPerCycle =
+                getHistoricalCycleSecondsForTask(
+                    taskName
+                );
+
+            if (
+                !Number.isFinite(
+                    secondsPerCycle
+                ) ||
+                secondsPerCycle <= 0
+            ) {
+                secondsPerCycle =
+                    activityCycleSeconds;
+
+                usedFallback = true;
+            }
+
+            if (
+                Number.isFinite(
+                    secondsPerCycle
+                ) &&
+                secondsPerCycle > 0
+            ) {
+                totalSeconds +=
+                    cycles *
+                    secondsPerCycle;
+
+                signatureParts.push(
+                    `${normalizeActivityKeyPart(taskName)}:${cycles}:${secondsPerCycle}`
+                );
+            }
+        });
+
+        if (
+            !foundCycles ||
+            totalSeconds <= 0
+        ) {
+            return null;
+        }
+
+        return {
+            seconds:
+                totalSeconds,
+
+            approximate:
+                usedFallback,
+
+            signature:
+                signatureParts.join('|')
+        };
+    }
+
+    function updateQueueRemainingDisplay() {
+        if (
+            !settings.activityQueueRemaining
+        ) {
+            activityQueueRow.style.display =
+                'none';
+
+            activityQueueRemainingElement.textContent =
+                '—';
+
+            queueCountdownSignature =
+                '';
+
+            queueCountdownBaseSeconds =
+                0;
+
+            queueCountdownStartedAt =
+                0;
+
+            return;
+        }
+
+        const estimate =
+            getQueueRemainingEstimate();
+
+        if (!estimate) {
+            activityQueueRow.style.display =
+                'none';
+
+            activityQueueRemainingElement.textContent =
+                '—';
+
+            return;
+        }
+
+        /*
+         * Start or restart the live countdown whenever the
+         * queued task/cycle structure changes.
+         */
+        if (
+            estimate.signature !==
+                queueCountdownSignature
+        ) {
+            queueCountdownSignature =
+                estimate.signature;
+
+            queueCountdownBaseSeconds =
+                estimate.seconds;
+
+            queueCountdownStartedAt =
+                Date.now();
+
+            queueCountdownApproximate =
+                estimate.approximate;
+        }
+
+        const elapsedSeconds =
+            Math.max(
+                0,
+                (
+                    Date.now() -
+                    queueCountdownStartedAt
+                ) / 1000
+            );
+
+        const remainingSeconds =
+            Math.max(
+                0,
+                queueCountdownBaseSeconds -
+                    elapsedSeconds
+            );
+
+        activityQueueRow.style.display =
+            'grid';
+
+        activityQueueRemainingElement.textContent =
+            `${queueCountdownApproximate ? '~' : ''}${formatDuration(
+                remainingSeconds
+            )}`;
+    }
+
+    // =========================================================
     // ACTIVITY DISPLAY
     // =========================================================
 
@@ -4922,6 +5337,7 @@
 
     function updateActivityDisplay() {
         updateActivityLevelEstimate();
+        updateQueueRemainingDisplay();
 
         if (
             !settings
@@ -6433,6 +6849,19 @@
                             row
                         );
                     }
+            })
+        );
+
+        activityGroup.appendChild(
+            createSettingsCard({
+                title:
+                    'Queue Remaining',
+
+                description:
+                    'Show estimated remaining time for queued activities in the Activity Session panel.',
+
+                toggleKey:
+                    'activityQueueRemaining'
             })
         );
 
