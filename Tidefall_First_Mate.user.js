@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.2.3
+// @version      1.2.4
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -237,6 +237,7 @@
     const COMBAT_SCAN_INTERVAL = 250;
     const ITEM_SCAN_INTERVAL = 250;
     const ITEM_DECREASE_CONFIRM_MS = 750;
+    const PORT_ITEM_DECREASE_CONFIRM_MS = 2000;
     const MARKET_SCAN_INTERVAL = 750;
     const DISPLAY_INTERVAL = 1000;
     const WARNING_SCAN_INTERVAL = 250;
@@ -1962,6 +1963,24 @@
     const processedVictories =
         new Set();
 
+    /*
+     * Tidefall can restore old combat-log entries after this
+     * userscript has already started. Keep victory processing
+     * locked briefly so restored history is marked as old rather
+     * than counted as a new session.
+     */
+    let victoryTrackingReady =
+        false;
+
+    let victoryBaselineLastChangedAt =
+        Date.now();
+
+    const victoryBaselineStartedAt =
+        Date.now();
+
+    let victoryBaselineCount =
+        0;
+
     const lastQuantities =
         new Map();
 
@@ -3442,6 +3461,75 @@
         checkForMissingPrices();
     }
 
+    function isVisibleElement(
+        element
+    ) {
+        if (!(element instanceof HTMLElement)) {
+            return false;
+        }
+
+        const computed =
+            window.getComputedStyle(
+                element
+            );
+
+        return (
+            !element.hidden &&
+            computed.display !==
+                'none' &&
+            computed.visibility !==
+                'hidden' &&
+            Number(
+                computed.opacity || 1
+            ) !== 0 &&
+            element.getClientRects()
+                .length > 0
+        );
+    }
+
+    function isExchangeOpen() {
+        const candidates =
+            [
+                document.querySelector(
+                    '#market-panel'
+                ),
+                document.querySelector(
+                    '#mkt-tab-exchange'
+                ),
+                document.querySelector(
+                    '.market-panel--open'
+                )
+            ];
+
+        return candidates.some(
+            isVisibleElement
+        );
+    }
+
+    function isPortInventoryOpen() {
+        const inventoryPanel =
+            document.querySelector(
+                '#inventory-panel'
+            );
+
+        if (!isVisibleElement(inventoryPanel)) {
+            return false;
+        }
+
+        /*
+         * Only pause for the port inventory view where both the
+         * ship cargo and city warehouse grids are mounted.
+         */
+        return Boolean(
+            inventoryPanel.querySelector(
+                '#inv-cargo-grid'
+            ) &&
+            inventoryPanel.querySelector(
+                '#inv-wh-grid'
+            )
+        );
+    }
+
     // =========================================================
     // COMBAT CONSUMPTION
     // =========================================================
@@ -3488,11 +3576,43 @@
             return;
         }
 
+        const quantities =
+            getCombinedTrackedQuantities();
+
+        /*
+         * Ignore Exchange-side inventory changes completely.
+         *
+         * While the port inventory is open, use a longer confirmation
+         * window. A normal warehouse-to-ship transfer should return the
+         * combined total to its previous value before confirmation, so it
+         * is ignored. A food or repair item actually consumed in port
+         * leaves the combined total lower and is charged after the delay.
+         */
+        if (isExchangeOpen()) {
+            quantities.forEach(
+                (
+                    quantity,
+                    itemId
+                ) => {
+                    lastQuantities.set(
+                        itemId,
+                        quantity
+                    );
+                }
+            );
+
+            pendingItemDecreases.clear();
+
+            return;
+        }
+
         const now =
             Date.now();
 
-        const quantities =
-            getCombinedTrackedQuantities();
+        const decreaseConfirmMs =
+            isPortInventoryOpen()
+                ? PORT_ITEM_DECREASE_CONFIRM_MS
+                : ITEM_DECREASE_CONFIRM_MS;
 
         quantities.forEach(
             (
@@ -3572,7 +3692,7 @@
                 if (
                     now -
                         pending.since <
-                    ITEM_DECREASE_CONFIRM_MS
+                    decreaseConfirmMs
                 ) {
                     return;
                 }
@@ -3789,6 +3909,83 @@
 
     markCurrentVictoriesProcessed();
 
+    /*
+     * Tidefall may restore combat history several seconds after
+     * the page appears. Keep treating every visible victory as
+     * baseline history until the victory list has remained stable
+     * for three seconds. A ten-second maximum prevents the tracker
+     * from remaining locked indefinitely.
+     */
+    const victoryBaselineInterval =
+        setInterval(
+            () => {
+                const entries =
+                    getVictoryEntries();
+
+                if (
+                    entries.length !==
+                    victoryBaselineCount
+                ) {
+                    victoryBaselineCount =
+                        entries.length;
+
+                    victoryBaselineLastChangedAt =
+                        Date.now();
+                }
+
+                entries.forEach(
+                    entry => {
+                        const id =
+                            entry.dataset.sentAt;
+
+                        if (id) {
+                            processedVictories.add(
+                                id
+                            );
+                        }
+                    }
+                );
+
+                const stableFor =
+                    Date.now() -
+                    victoryBaselineLastChangedAt;
+
+                const baselineAge =
+                    Date.now() -
+                    victoryBaselineStartedAt;
+
+                if (
+                    stableFor >= 3000 ||
+                    baselineAge >= 10000
+                ) {
+                    entries.forEach(
+                        entry => {
+                            const id =
+                                entry.dataset.sentAt;
+
+                            if (id) {
+                                processedVictories.add(
+                                    id
+                                );
+                            }
+                        }
+                    );
+
+                    victoryTrackingReady =
+                        true;
+
+                    clearInterval(
+                        victoryBaselineInterval
+                    );
+
+                    console.log(
+                        '[First Mate] Victory tracking ready; restored combat history ignored.'
+                    );
+                }
+            },
+            250
+        );
+
     function processVictory(entry) {
         if (
             !settings
@@ -3800,8 +3997,28 @@
         const id =
             entry.dataset.sentAt;
 
+        if (!id) {
+            return;
+        }
+
+        if (!victoryTrackingReady) {
+            if (
+                !processedVictories.has(
+                    id
+                )
+            ) {
+                victoryBaselineLastChangedAt =
+                    Date.now();
+            }
+
+            processedVictories.add(
+                id
+            );
+
+            return;
+        }
+
         if (
-            !id ||
             processedVictories.has(
                 id
             )
@@ -8732,6 +8949,24 @@
     // =========================================================
     // INITIALIZE
     // =========================================================
+
+    /*
+     * A page reload always begins a fresh PvE session.
+     */
+    combatRunning =
+        false;
+
+    combatKills = 0;
+    combatTotalXP = 0;
+    combatGrossGold = 0;
+
+    consumedItems.clear();
+    sessionPrices.clear();
+    lastQuantities.clear();
+    pendingItemDecreases.clear();
+
+    lastCombatTime =
+        0;
 
     restoreActivityPanelPosition();
 
