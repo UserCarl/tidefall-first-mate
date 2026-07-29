@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.2
+// @version      1.2.1
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -47,6 +47,7 @@
         activityLevelMode: 'actions',
         activitySessionLayout: 'header',
         combatSessionLayout: 'header',
+        pveTrackerHideDelaySeconds: 30,
         activityQueueRemaining: true,
 
         cannonDurabilityEnabled: true,
@@ -2123,6 +2124,50 @@
         }
 
         return false;
+    }
+
+    function shouldShowPvEHeader() {
+        if (
+            !combatRunning ||
+            !settings.combatTrackerEnabled
+        ) {
+            return false;
+        }
+
+        if (
+            isActuallyInCombat()
+        ) {
+            lastCombatTime =
+                Date.now();
+
+            return true;
+        }
+
+        const delay =
+            Number(
+                settings.pveTrackerHideDelaySeconds
+            );
+
+        if (delay === -1) {
+            return (
+                combatKills > 0 ||
+                combatTotalXP > 0 ||
+                combatGrossGold > 0
+            );
+        }
+
+        if (
+            lastCombatTime <= 0 ||
+            !Number.isFinite(delay)
+        ) {
+            return false;
+        }
+
+        return (
+            Date.now() -
+                lastCombatTime <=
+            Math.max(0, delay) * 1000
+        );
     }
 
     // =========================================================
@@ -6379,7 +6424,7 @@
         }
 
         const combatActive =
-            isActuallyInCombat();
+            shouldShowPvEHeader();
 
         combatHeaderLayout.classList.toggle(
             'tf-active',
@@ -6616,8 +6661,7 @@
         const combatHasHeaderPriority =
             settings.combatSessionLayout ===
                 'header' &&
-            settings.combatTrackerEnabled &&
-            isActuallyInCombat();
+            shouldShowPvEHeader();
 
         /*
          * Only show the Activity header while Tidefall's
@@ -7079,9 +7123,17 @@
             'change',
             () => {
 
+                const value =
+                    settingKey ===
+                        'pveTrackerHideDelaySeconds'
+                        ? Number(
+                            select.value
+                        )
+                        : select.value;
+
                 updateSetting(
                     settingKey,
-                    select.value
+                    value
                 );
 
                 updateActivityDisplay();
@@ -7423,6 +7475,65 @@
 
                         cardBody.appendChild(
                             row
+                        );
+
+                        const hideDelayRow =
+                            document.createElement(
+                                'div'
+                            );
+
+                        hideDelayRow.className =
+                            'tf-carl-select-row';
+
+                        hideDelayRow.dataset.parentToggle =
+                            'combatTrackerEnabled';
+
+                        const hideDelayLabel =
+                            document.createElement(
+                                'span'
+                            );
+
+                        hideDelayLabel.className =
+                            'tf-carl-setting-label';
+
+                        hideDelayLabel.textContent =
+                            'Hide After Combat';
+
+                        hideDelayRow.append(
+                            hideDelayLabel,
+                            createSelect(
+                                'pveTrackerHideDelaySeconds',
+                                [
+                                    {
+                                        value:
+                                            '15',
+                                        label:
+                                            '15 seconds'
+                                    },
+                                    {
+                                        value:
+                                            '30',
+                                        label:
+                                            '30 seconds'
+                                    },
+                                    {
+                                        value:
+                                            '60',
+                                        label:
+                                            '60 seconds'
+                                    },
+                                    {
+                                        value:
+                                            '-1',
+                                        label:
+                                            'Never'
+                                    }
+                                ]
+                            )
+                        );
+
+                        cardBody.appendChild(
+                            hideDelayRow
                         );
                     }
             })
@@ -7882,10 +7993,12 @@
             .forEach(
                 select => {
                     select.value =
-                        settings[
-                            select.dataset
-                                .setting
-                        ];
+                        String(
+                            settings[
+                                select.dataset
+                                    .setting
+                            ]
+                        );
                 }
             );
 
