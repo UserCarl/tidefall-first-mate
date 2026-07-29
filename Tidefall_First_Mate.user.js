@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.2.4
+// @version      1.2.5
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -237,7 +237,7 @@
     const COMBAT_SCAN_INTERVAL = 250;
     const ITEM_SCAN_INTERVAL = 250;
     const ITEM_DECREASE_CONFIRM_MS = 750;
-    const PORT_ITEM_DECREASE_CONFIRM_MS = 2000;
+    const PORT_ITEM_DECREASE_CONFIRM_MS = 3000;
     const MARKET_SCAN_INTERVAL = 750;
     const DISPLAY_INTERVAL = 1000;
     const WARNING_SCAN_INTERVAL = 250;
@@ -2429,12 +2429,7 @@
         if (warehouseMounted) {
             TRACKED_IDS.forEach(
                 itemId => {
-                    if (
-                        !seen.has(itemId) &&
-                        !warehouseQuantities.has(
-                            itemId
-                        )
-                    ) {
+                    if (!seen.has(itemId)) {
                         warehouseQuantities.set(
                             itemId,
                             0
@@ -2445,7 +2440,114 @@
         }
     }
 
+    function getTrackedGridQuantities(
+        gridSelector
+    ) {
+        const quantities =
+            new Map();
+
+        document
+            .querySelectorAll(
+                `${gridSelector} [data-item-type]`
+            )
+            .forEach(
+                element => {
+                    const itemId =
+                        Number(
+                            element.dataset
+                                .itemType
+                        );
+
+                    if (
+                        !TRACKED_IDS.has(
+                            itemId
+                        )
+                    ) {
+                        return;
+                    }
+
+                    const badge =
+                        element.querySelector(
+                            '.mp-badge-count'
+                        );
+
+                    const quantity =
+                        badge
+                            ? numberFromText(
+                                badge.textContent
+                            )
+                            : 1;
+
+                    quantities.set(
+                        itemId,
+                        (
+                            quantities.get(
+                                itemId
+                            ) || 0
+                        ) +
+                        quantity
+                    );
+                }
+            );
+
+        return quantities;
+    }
+
     function getCombinedTrackedQuantities() {
+        /*
+         * While the port Inventory screen is open, read both
+         * visible grids directly. This avoids mixing a live
+         * warehouse count with the combat HUD's delayed ship
+         * count during transfers.
+         */
+        const cargoGrid =
+            document.querySelector(
+                '#inv-cargo-grid'
+            );
+
+        const warehouseGrid =
+            document.querySelector(
+                '#inv-wh-grid'
+            );
+
+        if (
+            cargoGrid &&
+            warehouseGrid
+        ) {
+            const cargo =
+                getTrackedGridQuantities(
+                    '#inv-cargo-grid'
+                );
+
+            const warehouse =
+                getTrackedGridQuantities(
+                    '#inv-wh-grid'
+                );
+
+            const combined =
+                new Map();
+
+            TRACKED_IDS.forEach(
+                itemId => {
+                    combined.set(
+                        itemId,
+                        (
+                            cargo.get(
+                                itemId
+                            ) || 0
+                        ) +
+                        (
+                            warehouse.get(
+                                itemId
+                            ) || 0
+                        )
+                    );
+                }
+            );
+
+            return combined;
+        }
+
         scanWarehouseConsumables();
 
         const ship =
