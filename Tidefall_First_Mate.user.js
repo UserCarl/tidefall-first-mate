@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.2.5
+// @version      1.2.6
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -3682,15 +3682,13 @@
             getCombinedTrackedQuantities();
 
         /*
-         * Ignore Exchange-side inventory changes completely.
-         *
-         * While the port inventory is open, use a longer confirmation
-         * window. A normal warehouse-to-ship transfer should return the
-         * combined total to its previous value before confirmation, so it
-         * is ignored. A food or repair item actually consumed in port
-         * leaves the combined total lower and is charged after the delay.
+         * Only count consumable decreases while combat is
+         * actually active. Outside combat, inventory changes
+         * only refresh the baseline. This prevents purchases,
+         * ship/port transfers, and dockside item use from
+         * affecting PvE session costs.
          */
-        if (isExchangeOpen()) {
+        if (!isActuallyInCombat()) {
             quantities.forEach(
                 (
                     quantity,
@@ -3710,11 +3708,6 @@
 
         const now =
             Date.now();
-
-        const decreaseConfirmMs =
-            isPortInventoryOpen()
-                ? PORT_ITEM_DECREASE_CONFIRM_MS
-                : ITEM_DECREASE_CONFIRM_MS;
 
         quantities.forEach(
             (
@@ -3740,11 +3733,6 @@
                         itemId
                     );
 
-                /*
-                 * If total inventory increased or returned
-                 * to the previous value, this was likely a
-                 * transfer/restock rather than consumption.
-                 */
                 if (
                     quantity >=
                     previous
@@ -3794,7 +3782,7 @@
                 if (
                     now -
                         pending.since <
-                    decreaseConfirmMs
+                    ITEM_DECREASE_CONFIRM_MS
                 ) {
                     return;
                 }
