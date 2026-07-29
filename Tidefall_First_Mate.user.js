@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.2.6
+// @version      1.2.7
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -3640,33 +3640,36 @@
         lastQuantities.clear();
         pendingItemDecreases.clear();
 
-        getCombinedTrackedQuantities()
-            .forEach(
-                (
-                    quantity,
-                    itemId
-                ) => {
+        const quantities =
+            getEquippedConsumables();
 
-                    lastQuantities.set(
-                        itemId,
-                        quantity
+        TRACKED_IDS.forEach(
+            itemId => {
+                const quantity =
+                    quantities.get(
+                        itemId
+                    ) || 0;
+
+                lastQuantities.set(
+                    itemId,
+                    quantity
+                );
+
+                const price =
+                    getCachedPrice(
+                        itemId
                     );
 
-                    const price =
-                        getCachedPrice(
-                            itemId
-                        );
-
-                    if (
-                        price > 0
-                    ) {
-                        sessionPrices.set(
-                            itemId,
-                            price
-                        );
-                    }
+                if (
+                    price > 0
+                ) {
+                    sessionPrices.set(
+                        itemId,
+                        price
+                    );
                 }
-            );
+            }
+        );
     }
 
     function scanItemConsumption() {
@@ -3678,25 +3681,32 @@
             return;
         }
 
-        const quantities =
-            getCombinedTrackedQuantities();
+        const inCombat =
+            isActuallyInCombat();
 
         /*
-         * Only count consumable decreases while combat is
-         * actually active. Outside combat, inventory changes
-         * only refresh the baseline. This prevents purchases,
-         * ship/port transfers, and dockside item use from
-         * affecting PvE session costs.
+         * Use only the ship's live combat HUD quantities for
+         * consumable tracking. Port-storage totals and cached
+         * warehouse quantities are intentionally excluded.
          */
-        if (!isActuallyInCombat()) {
-            quantities.forEach(
-                (
-                    quantity,
-                    itemId
-                ) => {
+        const quantities =
+            getEquippedConsumables();
+
+        /*
+         * Outside combat, refresh the ship-only baseline without
+         * charging any decreases. This prevents purchases,
+         * transfers, and dockside item use from affecting the
+         * PvE session while keeping the next fight's starting
+         * quantities accurate.
+         */
+        if (!inCombat) {
+            TRACKED_IDS.forEach(
+                itemId => {
                     lastQuantities.set(
                         itemId,
-                        quantity
+                        quantities.get(
+                            itemId
+                        ) || 0
                     );
                 }
             );
@@ -3709,11 +3719,12 @@
         const now =
             Date.now();
 
-        quantities.forEach(
-            (
-                quantity,
-                itemId
-            ) => {
+        TRACKED_IDS.forEach(
+            itemId => {
+                const quantity =
+                    quantities.get(
+                        itemId
+                    ) || 0;
 
                 if (
                     !lastQuantities.has(
