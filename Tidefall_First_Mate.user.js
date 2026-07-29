@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.2.2
+// @version      1.2.3
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -1232,6 +1232,23 @@
             min-width: 180px;
 
             cursor: pointer;
+
+            color-scheme: dark;
+
+            color: #ffffff;
+
+            background:
+                #181a1f;
+
+            border-color:
+                #8d6a2f;
+        }
+
+        .tf-carl-select option {
+            color: #ffffff;
+
+            background:
+                #181a1f;
         }
 
         .tf-carl-number:focus,
@@ -2168,6 +2185,31 @@
                 lastCombatTime <=
             Math.max(0, delay) * 1000
         );
+    }
+
+    function shouldPvEOccupySharedHeader() {
+        if (
+            settings.combatSessionLayout !==
+                'header' ||
+            !shouldShowPvEHeader()
+        ) {
+            return false;
+        }
+
+        /*
+         * Combat always wins while a fight is actually active.
+         */
+        if (isActuallyInCombat()) {
+            return true;
+        }
+
+        /*
+         * After combat, an active non-combat task immediately
+         * takes the shared header back. The PvE session remains
+         * tracked in the background until its timer resets it,
+         * or indefinitely when Hide After Combat is set to Never.
+         */
+        return !getCurrentActivity();
     }
 
     // =========================================================
@@ -6475,7 +6517,7 @@
         }
 
         const combatActive =
-            shouldShowPvEHeader();
+            shouldPvEOccupySharedHeader();
 
         combatHeaderLayout.classList.toggle(
             'tf-active',
@@ -6712,7 +6754,7 @@
         const combatHasHeaderPriority =
             settings.combatSessionLayout ===
                 'header' &&
-            shouldShowPvEHeader();
+            shouldPvEOccupySharedHeader();
 
         /*
          * Only show the Activity header while Tidefall's
@@ -7474,7 +7516,7 @@
                     'Combat Tracker',
 
                 description:
-                    'Track PvE kills, XP, Gunnery level progress, and net session gold. Header mode takes priority over Activity while combat is active.',
+                    'Track PvE kills, XP, Gunnery level progress, and net session gold. Combat takes the header during fights; an active Activity takes it back afterward while the PvE session continues in the background.',
 
                 toggleKey:
                     'combatTrackerEnabled',
