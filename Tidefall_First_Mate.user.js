@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.2.1
+// @version      1.2.2
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -3830,6 +3830,74 @@
             );
     }
 
+    function resetCombatSession() {
+        combatRunning =
+            false;
+
+        combatKills = 0;
+        combatTotalXP = 0;
+        combatGrossGold = 0;
+
+        consumedItems.clear();
+        sessionPrices.clear();
+        lastQuantities.clear();
+        pendingItemDecreases.clear();
+
+        processedVictories.clear();
+        markCurrentVictoriesProcessed();
+
+        lastCombatTime =
+            0;
+
+        combatPanel.style.display =
+            'none';
+
+        combatHeaderLayout
+            ?.classList.remove(
+                'tf-active'
+            );
+
+        updateCombatButton();
+        updateCombatDisplay();
+        updateActivityHeaderLayout();
+    }
+
+    function checkPvEAutoReset() {
+        if (
+            !combatRunning ||
+            isActuallyInCombat()
+        ) {
+            return;
+        }
+
+        const delay =
+            Number(
+                settings.pveTrackerHideDelaySeconds
+            );
+
+        if (
+            delay === -1 ||
+            !Number.isFinite(delay) ||
+            lastCombatTime <= 0
+        ) {
+            return;
+        }
+
+        const expired =
+            Date.now() -
+                lastCombatTime >
+            Math.max(
+                0,
+                delay
+            ) * 1000;
+
+        if (!expired) {
+            return;
+        }
+
+        resetCombatSession();
+    }
+
     // =========================================================
     // COMBAT BUTTONS
     // =========================================================
@@ -3874,24 +3942,7 @@
     combatResetButton.addEventListener(
         'click',
         () => {
-
-            combatRunning =
-                false;
-
-            combatKills = 0;
-            combatTotalXP = 0;
-            combatGrossGold = 0;
-
-            consumedItems.clear();
-            sessionPrices.clear();
-            lastQuantities.clear();
-            pendingItemDecreases.clear();
-
-            processedVictories.clear();
-            markCurrentVictoriesProcessed();
-
-            updateCombatButton();
-            updateCombatDisplay();
+            resetCombatSession();
         }
     );
 
@@ -8604,6 +8655,11 @@
     setInterval(
         updateCombatHeaderLayout,
         1000
+    );
+
+    setInterval(
+        checkPvEAutoReset,
+        500
     );
 
     setInterval(
