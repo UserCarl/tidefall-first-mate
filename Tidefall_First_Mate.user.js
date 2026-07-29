@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.2.7
+// @version      1.3.1
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
-// @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
-// @downloadURL  https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
+// @updateURL    https://raw.githubusercontent.com/UserFirstMate/tidefall-first-mate/main/Tidefall_First_Mate.user.js
+// @downloadURL  https://raw.githubusercontent.com/UserFirstMate/tidefall-first-mate/main/Tidefall_First_Mate.user.js
 // @grant        none
 // ==/UserScript==
 
@@ -16,10 +16,14 @@
     // STORAGE
     // =========================================================
 
-    const SETTINGS_STORAGE_KEY = 'tf-carl-settings-v2';
+    const SETTINGS_STORAGE_KEY = 'tf-firstmate-settings-v2';
     const PRICE_STORAGE_KEY = 'tf-pve-market-prices-v2';
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
+
+    const FIRST_MATE_VERSION = '1.3.1';
+    const FIRST_MATE_GITHUB_URL =
+        'https://github.com/UserFirstMate/tidefall-first-mate';
 
     const DEFAULT_SETTINGS = {
         combatTrackerEnabled: true,
@@ -62,7 +66,7 @@
     function loadSettings() {
         try {
             const oldSettings = JSON.parse(
-                localStorage.getItem('tf-carl-settings-v1') || '{}'
+                localStorage.getItem('tf-firstmate-settings-v1') || '{}'
             );
 
             const currentSettings = JSON.parse(
@@ -91,7 +95,7 @@
             );
         } catch (error) {
             console.warn(
-                '[Carl Tools] Could not save settings:',
+                '[FirstMate Tools] Could not save settings:',
                 error
             );
         }
@@ -163,7 +167,7 @@
             );
         } catch (error) {
             console.warn(
-                '[Carl Tools] Could not save activity history:',
+                '[FirstMate Tools] Could not save activity history:',
                 error
             );
         }
@@ -710,7 +714,7 @@
                 #c5a05999;
         }
 
-        .tf-carl-refresh-button {
+        .tf-firstmate-refresh-button {
             width: 100%;
 
             padding: 10px 12px;
@@ -741,7 +745,7 @@
                 var(--radius-sm);
         }
 
-        .tf-carl-refresh-button:hover {
+        .tf-firstmate-refresh-button:hover {
             background:
                 #c5a0592e;
 
@@ -1056,15 +1060,15 @@
             pointer-events: none !important;
         }
 
-        .tf-carl-settings-group {
+        .tf-firstmate-settings-group {
             margin-bottom: 22px;
         }
 
-        .tf-carl-settings-group:last-child {
+        .tf-firstmate-settings-group:last-child {
             margin-bottom: 0;
         }
 
-        .tf-carl-settings-group-title {
+        .tf-firstmate-settings-group-title {
             margin: 4px 0 10px;
             padding: 0 2px 8px;
 
@@ -1086,17 +1090,17 @@
             text-transform: uppercase;
         }
 
-        #tf-carl-settings-section {
+        #tf-firstmate-settings-section {
             width: 100%;
         }
 
-        .tf-carl-native-hidden {
+        .tf-firstmate-native-hidden {
             display: none !important;
         }
 
-        .tf-carl-toggle-row,
-        .tf-carl-threshold-row,
-        .tf-carl-select-row {
+        .tf-firstmate-toggle-row,
+        .tf-firstmate-threshold-row,
+        .tf-firstmate-select-row {
             display: flex;
 
             align-items: center;
@@ -1107,17 +1111,17 @@
             width: 100%;
         }
 
-        .tf-carl-threshold-row,
-        .tf-carl-select-row {
+        .tf-firstmate-threshold-row,
+        .tf-firstmate-select-row {
             margin-top: 12px;
         }
 
-        .tf-carl-setting-label {
+        .tf-firstmate-setting-label {
             color:
                 var(--text-primary);
         }
 
-        .tf-carl-toggle {
+        .tf-firstmate-toggle {
             position: relative;
 
             width: 46px;
@@ -1136,7 +1140,7 @@
                 #ffffff14;
         }
 
-        .tf-carl-toggle::after {
+        .tf-firstmate-toggle::after {
             content: "";
 
             position: absolute;
@@ -1157,7 +1161,7 @@
                 background .15s;
         }
 
-        .tf-carl-toggle.tf-enabled {
+        .tf-firstmate-toggle.tf-enabled {
             background:
                 #c5a05933;
 
@@ -1165,20 +1169,20 @@
                 #c5a05999;
         }
 
-        .tf-carl-toggle.tf-enabled::after {
+        .tf-firstmate-toggle.tf-enabled::after {
             left: 23px;
 
             background:
                 var(--gold);
         }
 
-        .tf-carl-number-wrap {
+        .tf-firstmate-number-wrap {
             display: flex;
             align-items: center;
             gap: 7px;
         }
 
-        .tf-carl-slider-wrap {
+        .tf-firstmate-slider-wrap {
             display: grid;
             grid-template-columns: 220px 52px;
             align-items: center;
@@ -1186,20 +1190,20 @@
             min-width: 282px;
         }
 
-        .tf-carl-slider {
+        .tf-firstmate-slider {
             width: 220px;
             cursor: pointer;
         }
 
-        .tf-carl-slider-value {
+        .tf-firstmate-slider-value {
             min-width: 52px;
             color: var(--text-primary);
             font-weight: 700;
             text-align: right;
         }
 
-        .tf-carl-number,
-        .tf-carl-select {
+        .tf-firstmate-number,
+        .tf-firstmate-select {
             box-sizing: border-box;
 
             padding: 8px 10px;
@@ -1223,13 +1227,13 @@
                 var(--font-size-base);
         }
 
-        .tf-carl-number {
+        .tf-firstmate-number {
             width: 82px;
 
             text-align: right;
         }
 
-        .tf-carl-select {
+        .tf-firstmate-select {
             min-width: 180px;
 
             cursor: pointer;
@@ -1245,35 +1249,35 @@
                 #8d6a2f;
         }
 
-        .tf-carl-select option {
+        .tf-firstmate-select option {
             color: #ffffff;
 
             background:
                 #181a1f;
         }
 
-        .tf-carl-number:focus,
-        .tf-carl-select:focus {
+        .tf-firstmate-number:focus,
+        .tf-firstmate-select:focus {
             outline: none;
 
             border-color:
                 #c5a05999;
         }
 
-        .tf-carl-unit {
+        .tf-firstmate-unit {
             min-width: 42px;
 
             color:
                 var(--text-secondary);
         }
 
-        .tf-carl-disabled {
+        .tf-firstmate-disabled {
             opacity: .35;
 
             pointer-events: none;
         }
 
-        .tf-carl-card-dependent-disabled {
+        .tf-firstmate-card-dependent-disabled {
             opacity: .35;
         }
 
@@ -3267,7 +3271,7 @@
                 getCannonLayoutSignature();
         } catch (error) {
             console.warn(
-                '[Carl Tools] Cannon durability scan failed:',
+                '[FirstMate Tools] Cannon durability scan failed:',
                 error
             );
         } finally {
@@ -7254,7 +7258,7 @@
             'button';
 
         toggle.className =
-            'tf-carl-toggle';
+            'tf-firstmate-toggle';
 
         toggle.dataset.setting =
             settingKey;
@@ -7287,7 +7291,7 @@
             );
 
         wrapper.className =
-            'tf-carl-number-wrap';
+            'tf-firstmate-number-wrap';
 
         const input =
             document.createElement(
@@ -7307,7 +7311,7 @@
             '1';
 
         input.className =
-            'tf-carl-number';
+            'tf-firstmate-number';
 
         input.dataset.setting =
             settingKey;
@@ -7359,7 +7363,7 @@
             );
 
         unitElement.className =
-            'tf-carl-unit';
+            'tf-firstmate-unit';
 
         unitElement.textContent =
             unit;
@@ -7386,7 +7390,7 @@
             );
 
         wrapper.className =
-            'tf-carl-slider-wrap';
+            'tf-firstmate-slider-wrap';
 
         const input =
             document.createElement(
@@ -7406,7 +7410,7 @@
             String(step);
 
         input.className =
-            'tf-carl-slider';
+            'tf-firstmate-slider';
 
         input.dataset.setting =
             settingKey;
@@ -7420,7 +7424,7 @@
             );
 
         valueElement.className =
-            'tf-carl-slider-value';
+            'tf-firstmate-slider-value';
 
         const refreshValue =
             () => {
@@ -7502,7 +7506,7 @@
             );
 
         select.className =
-            'tf-carl-select';
+            'tf-firstmate-select';
 
         select.dataset.setting =
             settingKey;
@@ -7592,7 +7596,7 @@
             );
 
         card.className =
-            'acp-card tf-carl-card';
+            'acp-card tf-firstmate-card';
 
         if (
             trackerDependent
@@ -7634,7 +7638,7 @@
             );
 
         row.className =
-            'tf-carl-toggle-row';
+            'tf-firstmate-toggle-row';
 
         const label =
             document.createElement(
@@ -7642,7 +7646,7 @@
             );
 
         label.className =
-            'tf-carl-setting-label';
+            'tf-firstmate-setting-label';
 
         label.textContent =
             'Enabled';
@@ -7665,7 +7669,7 @@
                 );
 
             thresholdRow.className =
-                'tf-carl-threshold-row';
+                'tf-firstmate-threshold-row';
 
             thresholdRow.dataset
                 .parentToggle =
@@ -7677,7 +7681,7 @@
                 );
 
             thresholdLabel.className =
-                'tf-carl-setting-label';
+                'tf-firstmate-setting-label';
 
             thresholdLabel.textContent =
                 'Trigger at';
@@ -7723,7 +7727,7 @@
             );
 
         group.className =
-            'tf-carl-settings-group';
+            'tf-firstmate-settings-group';
 
         const heading =
             document.createElement(
@@ -7731,7 +7735,7 @@
             );
 
         heading.className =
-            'tf-carl-settings-group-title';
+            'tf-firstmate-settings-group-title';
 
         heading.textContent =
             title;
@@ -7750,7 +7754,7 @@
             );
 
         card.className =
-            'acp-card tf-carl-card';
+            'acp-card tf-firstmate-card';
 
         const meta =
             document.createElement(
@@ -7787,7 +7791,7 @@
             'button';
 
         button.className =
-            'tf-carl-refresh-button';
+            'tf-firstmate-refresh-button';
 
         button.textContent =
             'REFRESH PAGE';
@@ -7811,14 +7815,14 @@
         return card;
     }
 
-    function buildCarlSettingsSection() {
+    function buildFirstMateSettingsSection() {
         const section =
             document.createElement(
                 'section'
             );
 
         section.id =
-            'tf-carl-settings-section';
+            'tf-firstmate-settings-section';
 
         section.className =
             'acp-section';
@@ -7847,7 +7851,7 @@
                             );
 
                         row.className =
-                            'tf-carl-select-row';
+                            'tf-firstmate-select-row';
 
                         row.dataset.parentToggle =
                             'combatTrackerEnabled';
@@ -7858,7 +7862,7 @@
                             );
 
                         label.className =
-                            'tf-carl-setting-label';
+                            'tf-firstmate-setting-label';
 
                         label.textContent =
                             'Session Layout';
@@ -7894,7 +7898,7 @@
                             );
 
                         hideDelayRow.className =
-                            'tf-carl-select-row';
+                            'tf-firstmate-select-row';
 
                         hideDelayRow.dataset.parentToggle =
                             'combatTrackerEnabled';
@@ -7905,7 +7909,7 @@
                             );
 
                         hideDelayLabel.className =
-                            'tf-carl-setting-label';
+                            'tf-firstmate-setting-label';
 
                         hideDelayLabel.textContent =
                             'Hide After Combat';
@@ -8092,7 +8096,7 @@
                             );
 
                         row.className =
-                            'tf-carl-select-row';
+                            'tf-firstmate-select-row';
 
                         row.dataset
                             .parentToggle =
@@ -8104,7 +8108,7 @@
                             );
 
                         label.className =
-                            'tf-carl-setting-label';
+                            'tf-firstmate-setting-label';
 
                         label.textContent =
                             'Display';
@@ -8162,7 +8166,7 @@
                             );
 
                         row.className =
-                            'tf-carl-select-row';
+                            'tf-firstmate-select-row';
 
                         row.dataset
                             .parentToggle =
@@ -8174,7 +8178,7 @@
                             );
 
                         label.className =
-                            'tf-carl-setting-label';
+                            'tf-firstmate-setting-label';
 
                         label.textContent =
                             'Level Estimate';
@@ -8210,7 +8214,7 @@
                             );
 
                         layoutRow.className =
-                            'tf-carl-select-row';
+                            'tf-firstmate-select-row';
 
                         layoutRow.dataset
                             .parentToggle =
@@ -8222,7 +8226,7 @@
                             );
 
                         layoutLabel.className =
-                            'tf-carl-setting-label';
+                            'tf-firstmate-setting-label';
 
                         layoutLabel.textContent =
                             'Session Layout';
@@ -8313,7 +8317,7 @@
                             );
 
                         row.className =
-                            'tf-carl-select-row';
+                            'tf-firstmate-select-row';
 
                         row.dataset
                             .parentToggle =
@@ -8325,7 +8329,7 @@
                             );
 
                         label.className =
-                            'tf-carl-setting-label';
+                            'tf-firstmate-setting-label';
 
                         label.textContent =
                             'Zoom';
@@ -8377,7 +8381,7 @@
     function refreshSettingsUI() {
         document
             .querySelectorAll(
-                '.tf-carl-toggle[data-setting]'
+                '.tf-firstmate-toggle[data-setting]'
             )
             .forEach(
                 toggle => {
@@ -8399,7 +8403,7 @@
 
         document
             .querySelectorAll(
-                '.tf-carl-select[data-setting]'
+                '.tf-firstmate-select[data-setting]'
             )
             .forEach(
                 select => {
@@ -8415,7 +8419,7 @@
 
         document
             .querySelectorAll(
-                '.tf-carl-slider[data-setting]'
+                '.tf-firstmate-slider[data-setting]'
             )
             .forEach(
                 input => {
@@ -8428,7 +8432,7 @@
                     const valueElement =
                         input.parentElement
                             ?.querySelector(
-                                '.tf-carl-slider-value'
+                                '.tf-firstmate-slider-value'
                             );
 
                     if (valueElement) {
@@ -8445,7 +8449,7 @@
             .forEach(
                 row => {
                     row.classList.toggle(
-                        'tf-carl-disabled',
+                        'tf-firstmate-disabled',
                         !settings[
                             row.dataset
                                 .parentToggle
@@ -8456,7 +8460,101 @@
     }
 
     // =========================================================
-    // CARL'S SETTINGS TAB
+    // FIRST MATE VERSION LINK
+    // =========================================================
+
+    function injectFirstMateVersionLink() {
+        const gameVersionButton =
+            document.getElementById(
+                'nav-version-link'
+            );
+
+        if (
+            !gameVersionButton ||
+            document.getElementById(
+                'firstmate-version-link'
+            )
+        ) {
+            return;
+        }
+
+        const wrapper =
+            document.createElement(
+                'div'
+            );
+
+        wrapper.id =
+            'firstmate-version-wrap';
+
+        Object.assign(
+            wrapper.style,
+            {
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                width: '100%',
+                marginBottom: '6px'
+            }
+        );
+
+        const button =
+            gameVersionButton.cloneNode(
+                true
+            );
+
+        button.id =
+            'firstmate-version-link';
+
+        button.type =
+            'button';
+
+        button.innerHTML =
+            `⚓ FIRST MATE<br><span style="font-size:85%;">v${FIRST_MATE_VERSION}</span>`;
+
+        button.removeAttribute(
+            'title'
+        );
+
+        button.setAttribute(
+            'aria-label',
+            'Open Tidefall First Mate on GitHub'
+        );
+
+        Object.assign(
+            button.style,
+            {
+                margin: '0',
+                padding: '0',
+                lineHeight: '1.15',
+                textAlign: 'center',
+                whiteSpace: 'nowrap'
+            }
+        );
+
+        button.addEventListener(
+            'click',
+            () => {
+                window.open(
+                    FIRST_MATE_GITHUB_URL,
+                    '_blank',
+                    'noopener,noreferrer'
+                );
+            }
+        );
+
+        gameVersionButton.parentNode
+            .insertBefore(
+                wrapper,
+                gameVersionButton
+            );
+
+        wrapper.appendChild(
+            button
+        );
+    }
+
+    // =========================================================
+    // FIRST MATE'S SETTINGS TAB
     // =========================================================
 
     function getAccountNav() {
@@ -8473,35 +8571,35 @@
         ) || null;
     }
 
-    function closeCarlSettings() {
+    function closeFirstMateSettings() {
         document
             .querySelectorAll(
-                '.tf-carl-native-hidden'
+                '.tf-firstmate-native-hidden'
             )
             .forEach(
                 element => {
                     element.classList.remove(
-                        'tf-carl-native-hidden'
+                        'tf-firstmate-native-hidden'
                     );
                 }
             );
 
         document
             .getElementById(
-                'tf-carl-settings-section'
+                'tf-firstmate-settings-section'
             )
             ?.remove();
 
         document
             .getElementById(
-                'tf-carl-settings-tab'
+                'tf-firstmate-settings-tab'
             )
             ?.classList.remove(
                 'panel-tab--active'
             );
     }
 
-    function injectCarlSettingsTab() {
+    function injectFirstMateSettingsTab() {
         const nav =
             getAccountNav();
 
@@ -8511,7 +8609,7 @@
 
         let button =
             nav.querySelector(
-                '#tf-carl-settings-tab'
+                '#tf-firstmate-settings-tab'
             );
 
         if (!button) {
@@ -8521,7 +8619,7 @@
                 );
 
             button.id =
-                'tf-carl-settings-tab';
+                'tf-firstmate-settings-tab';
 
             button.className =
                 'panel-tab';
@@ -8569,12 +8667,12 @@
                                 element !==
                                     nav &&
                                 element.id !==
-                                    'tf-carl-settings-section'
+                                    'tf-firstmate-settings-section'
                         )
                         .forEach(
                             element => {
                                 element.classList.add(
-                                    'tf-carl-native-hidden'
+                                    'tf-firstmate-native-hidden'
                                 );
                             }
                         );
@@ -8595,12 +8693,12 @@
 
                     let section =
                         document.getElementById(
-                            'tf-carl-settings-section'
+                            'tf-firstmate-settings-section'
                         );
 
                     if (!section) {
                         section =
-                            buildCarlSettingsSection();
+                            buildFirstMateSettingsSection();
 
                         nav.insertAdjacentElement(
                             'afterend',
@@ -8620,26 +8718,26 @@
 
                 if (
                     tab.id ===
-                    'tf-carl-settings-tab'
+                    'tf-firstmate-settings-tab'
                 ) {
                     return;
                 }
 
                 if (
                     tab.dataset
-                        .carlBound ===
+                        .firstMateBound ===
                     '1'
                 ) {
                     return;
                 }
 
                 tab.dataset
-                    .carlBound =
+                    .firstMateBound =
                     '1';
 
                 tab.addEventListener(
                     'click',
-                    closeCarlSettings,
+                    closeFirstMateSettings,
                     true
                 );
             }
@@ -8744,7 +8842,7 @@
             );
         } catch (error) {
             console.warn(
-                '[Carl Tools] Could not save activity panel position:',
+                '[FirstMate Tools] Could not save activity panel position:',
                 error
             );
         }
@@ -8813,7 +8911,7 @@
                 `${top}px`;
         } catch (error) {
             console.warn(
-                '[Carl Tools] Could not restore activity panel position:',
+                '[FirstMate Tools] Could not restore activity panel position:',
                 error
             );
         }
@@ -8943,7 +9041,10 @@
 
     const accountObserver =
         new MutationObserver(
-            injectCarlSettingsTab
+            () => {
+                injectFirstMateSettingsTab();
+                injectFirstMateVersionLink();
+            }
         );
 
     accountObserver.observe(
@@ -9071,7 +9172,8 @@
 
     restoreActivityPanelPosition();
 
-    injectCarlSettingsTab();
+    injectFirstMateSettingsTab();
+    injectFirstMateVersionLink();
 
     scanMarketPrices();
 
