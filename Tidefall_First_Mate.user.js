@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.3.2
+// @version      1.3.6
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -21,7 +21,7 @@
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
 
-    const FIRST_MATE_VERSION = '1.3.2';
+    const FIRST_MATE_VERSION = '1.3.6-test';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -3136,6 +3136,95 @@
     const cannonWearBaseline =
         new Map();
 
+    const CANNON_SAFE_IDLE_MS =
+        5000;
+
+    let cannonSafeScanRequested =
+        true;
+
+    let cannonSafeScanReason =
+        'initial';
+
+    let lastUserInteractionAt =
+        Date.now();
+
+    let userPointerDown =
+        false;
+
+    function noteUserInteraction() {
+        lastUserInteractionAt =
+            Date.now();
+    }
+
+    document.addEventListener(
+        'pointerdown',
+        () => {
+            userPointerDown =
+                true;
+
+            noteUserInteraction();
+        },
+        true
+    );
+
+    document.addEventListener(
+        'pointerup',
+        () => {
+            userPointerDown =
+                false;
+
+            noteUserInteraction();
+        },
+        true
+    );
+
+    document.addEventListener(
+        'pointermove',
+        event => {
+            if (
+                userPointerDown ||
+                event.buttons !== 0
+            ) {
+                noteUserInteraction();
+            }
+        },
+        true
+    );
+
+    document.addEventListener(
+        'keydown',
+        noteUserInteraction,
+        true
+    );
+
+    document.addEventListener(
+        'wheel',
+        noteUserInteraction,
+        {
+            capture: true,
+            passive: true
+        }
+    );
+
+    function requestSafeCannonScan(
+        reason
+    ) {
+        cannonSafeScanRequested =
+            true;
+
+        cannonSafeScanReason =
+            reason || 'refresh';
+    }
+
+    function hasBeenIdleForSafeCannonScan() {
+        return (
+            !userPointerDown &&
+            Date.now() -
+                lastUserInteractionAt >=
+                CANNON_SAFE_IDLE_MS
+        );
+    }
+
     function getCannonWearKey(
         slot
     ) {
@@ -3283,13 +3372,12 @@
                 cannonWearMeasurementPending =
                     true;
 
-                setTimeout(
-                    () => {
-                        void scanCannonDurability(
-                            true
-                        );
-                    },
-                    600
+                requestSafeCannonScan(
+                    'post-combat'
+                );
+            } else {
+                requestSafeCannonScan(
+                    'baseline'
                 );
             }
         }
@@ -3448,17 +3536,10 @@
             }
         );
 
-        if (
-            labels.length === 0
-        ) {
-            setTimeout(
-                () =>
-                    scanCannonDurability(
-                        true
-                    ),
-                100
-            );
-        }
+        /*
+         * TEST: Do not automatically click cannon slots when labels
+         * are missing. This isolates map-input interference.
+         */
     }
 
     function readConditionFromCannonModal() {
@@ -3525,6 +3606,33 @@
         };
     }
 
+    function isFirstMateSafeToScanCannons() {
+        /*
+         * Only automate cannon-slot clicks after the page has
+         * been idle. Account settings, active pointer input,
+         * combat, and unrelated Tidefall windows block the scan.
+         */
+        if (
+            !hasBeenIdleForSafeCannonScan() ||
+            getAccountNav() ||
+            isActuallyInCombat()
+        ) {
+            return false;
+        }
+
+        const visibleModal = Array.from(
+            document.querySelectorAll(
+                '[role="dialog"], .modal, .panel-modal, .dialog, #inventory-panel'
+            )
+        ).some(
+            element =>
+                element.id !== 'inv-cargo-detail-modal' &&
+                isVisibleElement(element)
+        );
+
+        return !visibleModal;
+    }
+
     function closeCannonDetailModal() {
         const modal =
             document.querySelector(
@@ -3555,16 +3663,11 @@
             return;
         }
 
-        document.dispatchEvent(
-            new KeyboardEvent(
-                'keydown',
-                {
-                    key: 'Escape',
-                    code: 'Escape',
-                    bubbles: true
-                }
-            )
-        );
+        /*
+         * Do not dispatch a global Escape key. Tidefall can treat
+         * that as a request to close the account/settings panel or
+         * another native window.
+         */
     }
 
     function waitForCannonCondition(
@@ -3607,9 +3710,10 @@
         if (
             !settings.cannonDurabilityEnabled ||
             cannonDurabilityScanning ||
-            isActuallyInCombat()
+            isActuallyInCombat() ||
+            !isFirstMateSafeToScanCannons()
         ) {
-            return;
+            return false;
         }
 
         const slots =
@@ -3617,7 +3721,7 @@
 
         if (slots.length === 0) {
             lastCannonLayoutSignature = '';
-            return;
+            return false;
         }
 
         if (
@@ -3625,7 +3729,7 @@
                 '#inv-cargo-detail-modal'
             )
         ) {
-            return;
+            return false;
         }
 
         const signature =
@@ -3642,7 +3746,7 @@
                     )
             )
         ) {
-            return;
+            return false;
         }
 
         cannonDurabilityScanning =
@@ -3653,6 +3757,9 @@
         );
 
         try {
+            const scanInteractionBaseline =
+                lastUserInteractionAt;
+
             const orderedSlots =
                 slots.slice().sort(
                     (a, b) =>
@@ -3661,8 +3768,13 @@
                 );
 
             for (const slot of orderedSlots) {
-                if (isActuallyInCombat()) {
-                    break;
+                if (
+                    isActuallyInCombat() ||
+                    userPointerDown ||
+                    lastUserInteractionAt !==
+                        scanInteractionBaseline
+                ) {
+                    return false;
                 }
 
                 slot.click();
@@ -3688,11 +3800,15 @@
 
             lastCannonLayoutSignature =
                 getCannonLayoutSignature();
+
+            return true;
         } catch (error) {
             console.warn(
                 '[FirstMate Tools] Cannon durability scan failed:',
                 error
             );
+
+            return false;
         } finally {
             closeCannonDetailModal();
 
@@ -3703,16 +3819,6 @@
             cannonDurabilityScanning =
                 false;
 
-            if (
-                cannonWearMeasurementPending
-            ) {
-                cannonWearMeasurementPending =
-                    false;
-
-                captureCannonWearBaseline();
-
-                updateCombatDisplay();
-            }
         }
     }
 
@@ -3728,17 +3834,64 @@
         const signature =
             getCannonLayoutSignature();
 
+        if (!signature) {
+            lastCannonLayoutSignature =
+                '';
+
+            return;
+        }
+
         if (
-            signature &&
-            signature !== lastCannonLayoutSignature
+            signature !==
+                lastCannonLayoutSignature
         ) {
-            setTimeout(
-                () =>
-                    scanCannonDurability(true),
-                250
+            requestSafeCannonScan(
+                'layout'
             );
-        } else if (!signature) {
-            lastCannonLayoutSignature = '';
+        }
+    }
+
+    async function processSafeCannonScanRequest() {
+        if (
+            !cannonSafeScanRequested ||
+            cannonDurabilityScanning ||
+            !isFirstMateSafeToScanCannons()
+        ) {
+            return;
+        }
+
+        const reason =
+            cannonSafeScanReason;
+
+        const completed =
+            await scanCannonDurability(
+                true
+            );
+
+        if (!completed) {
+            return;
+        }
+
+        cannonSafeScanRequested =
+            false;
+
+        cannonSafeScanReason =
+            '';
+
+        if (
+            reason === 'post-combat' &&
+            cannonWearMeasurementPending
+        ) {
+            cannonWearMeasurementPending =
+                false;
+
+            captureCannonWearBaseline();
+
+            updateCombatDisplay();
+        } else if (
+            cannonWearBaseline.size === 0
+        ) {
+            captureCannonWearBaseline();
         }
     }
 
@@ -9492,6 +9645,10 @@
                 '';
         } else {
             refreshCannonDurabilityDisplay();
+
+            requestSafeCannonScan(
+                'enabled'
+            );
         }
 
         checkCombatWarnings();
@@ -9732,10 +9889,28 @@
     // OBSERVERS
     // =========================================================
 
+    let accountObserverTimer =
+        null;
+
     const accountObserver =
         new MutationObserver(
             () => {
-                injectFirstMateSettingsTab();
+                if (accountObserverTimer !== null) {
+                    return;
+                }
+
+                accountObserverTimer =
+                    window.setTimeout(
+                        () => {
+                            accountObserverTimer =
+                                null;
+
+                            if (getAccountNav()) {
+                                injectFirstMateSettingsTab();
+                            }
+                        },
+                        100
+                    );
             }
         );
 
@@ -9815,8 +9990,16 @@
         500
     );
 
+
     setInterval(
         checkForNewCannonLayout,
+        1000
+    );
+
+    setInterval(
+        () => {
+            void processSafeCannonScanRequest();
+        },
         1000
     );
 
@@ -9828,8 +10011,6 @@
     setInterval(
         () => {
             void applyStartupDisplayAndCamera();
-
-    checkNavigationFollowShip();
         },
         500
     );
@@ -9837,12 +10018,6 @@
     setInterval(
         checkNavigationFollowShip,
         250
-    );
-
-    setInterval(
-        () =>
-            scanCannonDurability(true),
-        CANNON_DURABILITY_SCAN_INTERVAL
     );
 
     // =========================================================
@@ -9895,8 +10070,11 @@
 
     checkIdleWarning();
 
+    requestSafeCannonScan(
+        'initial'
+    );
 
-    checkForNewCannonLayout();
+
 
     void applyStartupDisplayAndCamera();
 })();
