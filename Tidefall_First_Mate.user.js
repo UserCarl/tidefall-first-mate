@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.3.8
+// @version      1.3.9
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -21,7 +21,7 @@
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
 
-    const FIRST_MATE_VERSION = '1.3.8';
+    const FIRST_MATE_VERSION = '1.3.9-test';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -991,6 +991,58 @@
             text-align: center;
         }
 
+        .tf-community-warning-brand {
+            margin-bottom: 10px;
+            color: var(--gold, #c5a059);
+            font-family: var(--font-heading, "QuadraatOffcPro", Georgia, serif);
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: .04em;
+            line-height: 1.2;
+            text-transform: none;
+        }
+
+        .tf-community-warning-title {
+            color: #ff3b30;
+            font-family: var(--font-heading, "QuadraatOffcPro", Georgia, serif);
+            font-size: 22px;
+            font-weight: 900;
+            letter-spacing: .06em;
+            line-height: 1.2;
+            text-transform: uppercase;
+        }
+
+        .tf-community-warning-message {
+            margin-top: 6px;
+            color: var(--text-primary, #e8e0d0);
+            font-family: var(--font-body, "Gothic A1", sans-serif);
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0;
+            line-height: 1.35;
+            text-transform: none;
+        }
+
+        .tf-firstmate-preview-button {
+            width: 100%;
+            padding: 10px 12px;
+            cursor: pointer;
+            color: var(--gold, #c5a059);
+            background: #c5a05914;
+            border: 1px solid #c5a05959;
+            border-radius: var(--radius-sm);
+            font-family: var(--font-body);
+            font-size: var(--font-size-sm);
+            font-weight: 700;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+        }
+
+        .tf-firstmate-preview-button:hover {
+            background: #c5a0592e;
+            border-color: #c5a05999;
+        }
+
         #tf-price-warning {
             position: fixed;
 
@@ -1596,12 +1648,33 @@
     idleWarning.id =
         'tf-idle-warning';
 
-    idleWarning.textContent =
-        'YOU ARE IDLE';
+    idleWarning.innerHTML = `
+        <div class="tf-community-warning-brand">
+            ⚓ Tidefall First Mate - Community Addon
+        </div>
+
+        <div id="tf-idle-warning-title" class="tf-community-warning-title">
+            Idle Warning
+        </div>
+
+        <div id="tf-idle-warning-message" class="tf-community-warning-message">
+            No active task detected.
+        </div>
+    `;
 
     document.body.appendChild(
         idleWarning
     );
+
+    const idleWarningTitle =
+        idleWarning.querySelector(
+            '#tf-idle-warning-title'
+        );
+
+    const idleWarningMessage =
+        idleWarning.querySelector(
+            '#tf-idle-warning-message'
+        );
 
     const combatWarning =
         document.createElement('div');
@@ -1609,9 +1682,22 @@
     combatWarning.id =
         'tf-combat-warning';
 
+    combatWarning.innerHTML = `
+        <div class="tf-community-warning-brand">
+            ⚓ Tidefall First Mate - Community Addon
+        </div>
+
+        <div id="tf-combat-warning-content"></div>
+    `;
+
     document.body.appendChild(
         combatWarning
     );
+
+    const combatWarningContent =
+        combatWarning.querySelector(
+            '#tf-combat-warning-content'
+        );
 
     const priceWarning =
         document.createElement('div');
@@ -1620,18 +1706,27 @@
         'tf-price-warning';
 
     priceWarning.innerHTML = `
-        <div id="tf-price-warning-title">
-            PRICE MISSING
+        <div class="tf-community-warning-brand">
+            ⚓ Tidefall First Mate - Community Addon
         </div>
 
-        <div id="tf-price-warning-message">
-            Open Exchange to load item price
+        <div id="tf-price-warning-title" class="tf-community-warning-title">
+            Price Missing
+        </div>
+
+        <div id="tf-price-warning-message" class="tf-community-warning-message">
+            Open Exchange to load item price.
         </div>
     `;
 
     document.body.appendChild(
         priceWarning
     );
+
+    const priceWarningTitle =
+        priceWarning.querySelector(
+            '#tf-price-warning-title'
+        );
 
     const priceWarningMessage =
         priceWarning.querySelector(
@@ -1646,6 +1741,9 @@
 
     let currentCombatWarnings =
         [];
+
+    let warningPreviewRunning =
+        false;
 
     idleWarning.addEventListener(
         'click',
@@ -2916,6 +3014,10 @@
     }
 
     function checkIdleWarning() {
+        if (warningPreviewRunning) {
+            return;
+        }
+
         if (
             !settings.idleWarningEnabled
         ) {
@@ -2971,8 +3073,11 @@
             idleSeconds >= thresholdSeconds &&
             !idleWarningDismissed
         ) {
-            idleWarning.textContent =
-                'YOU ARE IDLE';
+            idleWarningTitle.textContent =
+                'Idle Warning';
+
+            idleWarningMessage.textContent =
+                `No active task detected for ${thresholdSeconds} seconds.`;
 
             idleWarning.style.display =
                 'block';
@@ -2987,6 +3092,10 @@
     // =========================================================
 
     function checkCombatWarnings() {
+        if (warningPreviewRunning) {
+            return;
+        }
+
         if (
             !settings.combatWarningsEnabled ||
             !isInCombat()
@@ -3010,7 +3119,11 @@
             hull !== null &&
             hull <= settings.hullWarningValue
         ) {
-            warnings.push('LOW HULL');
+            warnings.push({
+                key: 'LOW HULL',
+                title: 'Low Hull Warning',
+                message: `Hull integrity below ${settings.hullWarningValue}%.`
+            });
         }
 
         if (
@@ -3018,7 +3131,11 @@
             crew !== null &&
             crew <= settings.crewWarningValue
         ) {
-            warnings.push('LOW CREW');
+            warnings.push({
+                key: 'LOW CREW',
+                title: 'Low Crew Warning',
+                message: `Crew strength below ${settings.crewWarningValue}%.`
+            });
         }
 
         if (
@@ -3044,7 +3161,11 @@
                 ammo !== null &&
                 ammo <= settings.ammoWarningValue
             ) {
-                warnings.push('LOW AMMO');
+                warnings.push({
+                    key: 'LOW AMMO',
+                    title: 'Low Ammo Warning',
+                    message: `Ammunition at or below ${settings.ammoWarningValue} shots.`
+                });
             }
 
             if (
@@ -3052,7 +3173,13 @@
                 food !== null &&
                 food <= settings.foodWarningValue
             ) {
-                warnings.push('LOW FOOD');
+                warnings.push({
+                    key: 'LOW FOOD',
+                    title: 'Low Food Warning',
+                    message: settings.foodWarningValue <= 0
+                        ? 'No food remaining.'
+                        : `Food at or below ${settings.foodWarningValue}.`
+                });
             }
 
             if (
@@ -3060,7 +3187,13 @@
                 repairs !== null &&
                 repairs <= settings.repairWarningValue
             ) {
-                warnings.push('LOW REPAIR KITS');
+                warnings.push({
+                    key: 'LOW REPAIR KITS',
+                    title: 'Low Repair Kits Warning',
+                    message: settings.repairWarningValue <= 0
+                        ? 'No repair kits remaining.'
+                        : `Repair kits at or below ${settings.repairWarningValue}.`
+                });
             }
         }
 
@@ -3074,8 +3207,9 @@
         ).forEach(
             warning => {
                 if (
-                    !warnings.includes(
-                        warning
+                    !warnings.some(
+                        item =>
+                            item.key === warning
                     )
                 ) {
                     dismissedCombatWarnings.delete(
@@ -3086,13 +3220,15 @@
         );
 
         currentCombatWarnings =
-            warnings.slice();
+            warnings.map(
+                warning => warning.key
+            );
 
         const visibleWarnings =
             warnings.filter(
                 warning =>
                     !dismissedCombatWarnings.has(
-                        warning
+                        warning.key
                     )
             );
 
@@ -3104,8 +3240,17 @@
             return;
         }
 
-        combatWarning.innerHTML =
-            visibleWarnings.join('<br>');
+        combatWarningContent.innerHTML =
+            visibleWarnings.map(
+                warning => `
+                    <div class="tf-community-warning-title">
+                        ${warning.title}
+                    </div>
+                    <div class="tf-community-warning-message">
+                        ${warning.message}
+                    </div>
+                `
+            ).join('<div style="height: 14px;"></div>');
 
         combatWarning.style.display =
             'block';
@@ -4519,6 +4664,10 @@
     }
 
     function checkForMissingPrices() {
+        if (warningPreviewRunning) {
+            return;
+        }
+
         if (
             !combatRunning ||
             !settings
@@ -4564,8 +4713,11 @@
             return;
         }
 
+        priceWarningTitle.textContent =
+            'Price Missing';
+
         priceWarningMessage.textContent =
-            missing.join(', ');
+            `Open Exchange to load item price: ${missing.join(', ')}.`;
 
         priceWarning.style.display =
             'block';
@@ -8679,6 +8831,86 @@
         return card;
     }
 
+    function hideWarningPreviews() {
+        idleWarning.style.display = 'none';
+        combatWarning.style.display = 'none';
+        priceWarning.style.display = 'none';
+    }
+
+    async function previewAllWarnings() {
+        if (warningPreviewRunning) {
+            return;
+        }
+
+        warningPreviewRunning = true;
+
+        const previews = [
+            ['combat', 'Low Hull Warning', `Hull integrity below ${settings.hullWarningValue}%.`],
+            ['combat', 'Low Crew Warning', `Crew strength below ${settings.crewWarningValue}%.`],
+            ['combat', 'Low Ammo Warning', `Ammunition at or below ${settings.ammoWarningValue} shots.`],
+            ['combat', 'Low Food Warning', settings.foodWarningValue <= 0 ? 'No food remaining.' : `Food at or below ${settings.foodWarningValue}.`],
+            ['combat', 'Low Repair Kits Warning', settings.repairWarningValue <= 0 ? 'No repair kits remaining.' : `Repair kits at or below ${settings.repairWarningValue}.`],
+            ['idle', 'Idle Warning', `No active task detected for ${settings.idleWarningSeconds} seconds.`],
+            ['price', 'Price Missing', 'Open Exchange to load item price: Cinder Round Shot.']
+        ];
+
+        try {
+            for (const [type, title, message] of previews) {
+                hideWarningPreviews();
+
+                if (type === 'combat') {
+                    combatWarningContent.innerHTML = `
+                        <div class="tf-community-warning-title">${title}</div>
+                        <div class="tf-community-warning-message">${message}</div>
+                    `;
+                    combatWarning.style.display = 'block';
+                } else if (type === 'idle') {
+                    idleWarningTitle.textContent = title;
+                    idleWarningMessage.textContent = message;
+                    idleWarning.style.display = 'block';
+                } else {
+                    priceWarningTitle.textContent = title;
+                    priceWarningMessage.textContent = message;
+                    priceWarning.style.display = 'block';
+                }
+
+                await waitMilliseconds(3000);
+            }
+        } finally {
+            hideWarningPreviews();
+            warningPreviewRunning = false;
+        }
+    }
+
+    function createWarningPreviewCard() {
+        const card = document.createElement('div');
+        card.className = 'acp-card tf-firstmate-card';
+
+        const meta = document.createElement('div');
+        meta.className = 'acp-card-meta';
+        meta.innerHTML = `
+            <div class="acp-card-title">Warning Preview</div>
+            <div class="acp-card-desc">
+                Test build only. Preview every First Mate warning, including the missing-price warning.
+            </div>
+        `;
+
+        const cardBody = document.createElement('div');
+        cardBody.className = 'acp-card-body';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'tf-firstmate-preview-button';
+        button.textContent = 'PREVIEW ALL WARNINGS';
+        button.addEventListener('click', () => {
+            void previewAllWarnings();
+        });
+
+        cardBody.appendChild(button);
+        card.append(meta, cardBody);
+        return card;
+    }
+
     function buildFirstMateSettingsSection() {
         const section =
             document.createElement(
@@ -9293,6 +9525,10 @@
                 toggleKey:
                     'startupFollowShipEnabled'
             })
+        );
+
+        displayGroup.appendChild(
+            createWarningPreviewCard()
         );
 
         displayGroup.appendChild(
