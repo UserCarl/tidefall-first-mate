@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.3.9
+// @version      1.4
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -21,7 +21,7 @@
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
 
-    const FIRST_MATE_VERSION = '1.3.9-test';
+    const FIRST_MATE_VERSION = '1.4';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -1742,9 +1742,6 @@
     let currentCombatWarnings =
         [];
 
-    let warningPreviewRunning =
-        false;
-
     idleWarning.addEventListener(
         'click',
         () => {
@@ -3014,10 +3011,6 @@
     }
 
     function checkIdleWarning() {
-        if (warningPreviewRunning) {
-            return;
-        }
-
         if (
             !settings.idleWarningEnabled
         ) {
@@ -3092,10 +3085,6 @@
     // =========================================================
 
     function checkCombatWarnings() {
-        if (warningPreviewRunning) {
-            return;
-        }
-
         if (
             !settings.combatWarningsEnabled ||
             !isInCombat()
@@ -4664,10 +4653,6 @@
     }
 
     function checkForMissingPrices() {
-        if (warningPreviewRunning) {
-            return;
-        }
-
         if (
             !combatRunning ||
             !settings
@@ -8831,86 +8816,6 @@
         return card;
     }
 
-    function hideWarningPreviews() {
-        idleWarning.style.display = 'none';
-        combatWarning.style.display = 'none';
-        priceWarning.style.display = 'none';
-    }
-
-    async function previewAllWarnings() {
-        if (warningPreviewRunning) {
-            return;
-        }
-
-        warningPreviewRunning = true;
-
-        const previews = [
-            ['combat', 'Low Hull Warning', `Hull integrity below ${settings.hullWarningValue}%.`],
-            ['combat', 'Low Crew Warning', `Crew strength below ${settings.crewWarningValue}%.`],
-            ['combat', 'Low Ammo Warning', `Ammunition at or below ${settings.ammoWarningValue} shots.`],
-            ['combat', 'Low Food Warning', settings.foodWarningValue <= 0 ? 'No food remaining.' : `Food at or below ${settings.foodWarningValue}.`],
-            ['combat', 'Low Repair Kits Warning', settings.repairWarningValue <= 0 ? 'No repair kits remaining.' : `Repair kits at or below ${settings.repairWarningValue}.`],
-            ['idle', 'Idle Warning', `No active task detected for ${settings.idleWarningSeconds} seconds.`],
-            ['price', 'Price Missing', 'Open Exchange to load item price: Cinder Round Shot.']
-        ];
-
-        try {
-            for (const [type, title, message] of previews) {
-                hideWarningPreviews();
-
-                if (type === 'combat') {
-                    combatWarningContent.innerHTML = `
-                        <div class="tf-community-warning-title">${title}</div>
-                        <div class="tf-community-warning-message">${message}</div>
-                    `;
-                    combatWarning.style.display = 'block';
-                } else if (type === 'idle') {
-                    idleWarningTitle.textContent = title;
-                    idleWarningMessage.textContent = message;
-                    idleWarning.style.display = 'block';
-                } else {
-                    priceWarningTitle.textContent = title;
-                    priceWarningMessage.textContent = message;
-                    priceWarning.style.display = 'block';
-                }
-
-                await waitMilliseconds(3000);
-            }
-        } finally {
-            hideWarningPreviews();
-            warningPreviewRunning = false;
-        }
-    }
-
-    function createWarningPreviewCard() {
-        const card = document.createElement('div');
-        card.className = 'acp-card tf-firstmate-card';
-
-        const meta = document.createElement('div');
-        meta.className = 'acp-card-meta';
-        meta.innerHTML = `
-            <div class="acp-card-title">Warning Preview</div>
-            <div class="acp-card-desc">
-                Test build only. Preview every First Mate warning, including the missing-price warning.
-            </div>
-        `;
-
-        const cardBody = document.createElement('div');
-        cardBody.className = 'acp-card-body';
-
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'tf-firstmate-preview-button';
-        button.textContent = 'PREVIEW ALL WARNINGS';
-        button.addEventListener('click', () => {
-            void previewAllWarnings();
-        });
-
-        cardBody.appendChild(button);
-        card.append(meta, cardBody);
-        return card;
-    }
-
     function buildFirstMateSettingsSection() {
         const section =
             document.createElement(
@@ -9525,10 +9430,6 @@
                 toggleKey:
                     'startupFollowShipEnabled'
             })
-        );
-
-        displayGroup.appendChild(
-            createWarningPreviewCard()
         );
 
         displayGroup.appendChild(
