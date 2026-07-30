@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.3.1
+// @version      1.3.2
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -21,12 +21,14 @@
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
 
-    const FIRST_MATE_VERSION = '1.3.1';
+    const FIRST_MATE_VERSION = '1.3.2';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
     const DEFAULT_SETTINGS = {
         combatTrackerEnabled: true,
+        consumableCostsEnabled: true,
+        cannonWearCostsEnabled: false,
         combatWarningsEnabled: true,
 
         hullWarningEnabled: true,
@@ -754,6 +756,66 @@
         }
 
 
+        .tf-firstmate-version-card {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: center;
+            gap: 18px;
+        }
+
+        .tf-firstmate-version-value {
+            color:
+                var(--gold, #c5a059);
+
+            font-family:
+                var(--font-heading, "QuadraatOffcPro", Georgia, serif);
+
+            font-size:
+                var(--font-size-lg, 1.3rem);
+
+            font-weight: 700;
+
+            letter-spacing: .08em;
+        }
+
+        .tf-firstmate-github-button {
+            padding: 9px 12px;
+
+            cursor: pointer;
+
+            color:
+                var(--gold, #c5a059);
+
+            background:
+                #c5a05914;
+
+            border:
+                1px solid #c5a05959;
+
+            border-radius:
+                var(--radius-sm);
+
+            font-family:
+                var(--font-body);
+
+            font-size:
+                var(--font-size-sm);
+
+            font-weight: 700;
+
+            letter-spacing: .06em;
+            text-transform: uppercase;
+        }
+
+        .tf-firstmate-github-button:hover {
+            background:
+                #c5a0592e;
+
+            border-color:
+                #c5a05999;
+        }
+
+
         #tf-pve-panel {
             top: ${COMBAT_TOP}px;
             left: ${COMBAT_LEFT}px;
@@ -773,6 +835,66 @@
         #tf-net-gold {
             color:
                 var(--reward-gold, #f0c45c);
+        }
+
+        #tf-net-gold-row {
+            cursor: pointer;
+        }
+
+        #tf-net-gold-row:hover {
+            background: rgba(197, 160, 89, .06);
+        }
+
+        #tf-net-gold-open {
+            margin-left: 5px;
+            color: var(--gold, #c5a059);
+            font-size: .8em;
+        }
+
+        #tf-cost-window {
+            top: 130px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 300px;
+            display: none;
+        }
+
+        #tf-cost-window.tf-open {
+            display: block;
+        }
+
+        #tf-cost-window-body {
+            padding: 12px 16px 16px;
+        }
+
+        .tf-cost-row {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 12px;
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, .05);
+            color: var(--text-secondary, #d4be8ca6);
+            font-size: var(--font-size-sm, .909rem);
+        }
+
+        .tf-cost-row strong {
+            color: var(--text-primary, #e8e0d0);
+            font-weight: 600;
+        }
+
+        .tf-cost-row.tf-positive strong {
+            color: var(--reward-gold, #f0c45c);
+        }
+
+        .tf-cost-row.tf-negative strong {
+            color: var(--text-danger, #e86b60);
+        }
+
+        .tf-cost-row.tf-total {
+            margin-top: 5px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(197, 160, 89, .28);
+            border-bottom: 0;
         }
 
         #tf-pve-controls {
@@ -1426,6 +1548,12 @@
             color: var(--reward-gold, #f0c45c);
         }
 
+
+        .tf-combat-header-stat[data-kind="gold"] {
+            pointer-events: auto;
+            cursor: pointer;
+        }
+
         @media (max-width: 1700px) {
             #tf-activity-header-layout {
                 max-width: calc(100% - 650px);
@@ -1638,7 +1766,13 @@
                 </span>
             </div>
 
-            <div class="tf-stat-row">
+            <div
+                id="tf-net-gold-row"
+                class="tf-stat-row"
+                role="button"
+                tabindex="0"
+                aria-label="Open PvE cost breakdown"
+            >
                 <span class="tf-stat-label">
                     Net Gold
                 </span>
@@ -1648,6 +1782,7 @@
                     class="tf-stat-value"
                 >
                     0
+                    <span id="tf-net-gold-open">↗</span>
                 </span>
             </div>
 
@@ -1717,6 +1852,119 @@
     const netGoldElement =
         combatPanel.querySelector(
             '#tf-net-gold'
+        );
+
+
+    const netGoldRow =
+        combatPanel.querySelector(
+            '#tf-net-gold-row'
+        );
+
+    const costWindow =
+        document.createElement(
+            'div'
+        );
+
+    costWindow.id =
+        'tf-cost-window';
+
+    costWindow.className =
+        'tf-session-panel';
+
+    costWindow.innerHTML = `
+        <div
+            id="tf-cost-window-header"
+            class="tf-session-header"
+        >
+            <div class="tf-session-title">
+                PvE Cost Breakdown
+            </div>
+
+            <button
+                id="tf-cost-window-close"
+                class="tf-window-btn"
+                type="button"
+                title="Close"
+            >
+                ×
+            </button>
+        </div>
+
+        <div id="tf-cost-window-body">
+            <div class="tf-cost-row tf-positive">
+                <span>Gold Earned</span>
+                <strong id="tf-cost-gross">+0</strong>
+            </div>
+
+            <div class="tf-cost-row tf-negative">
+                <span>Ammo Cost</span>
+                <strong id="tf-cost-ammo">-0</strong>
+            </div>
+
+            <div class="tf-cost-row tf-negative">
+                <span>Food Cost</span>
+                <strong id="tf-cost-food">-0</strong>
+            </div>
+
+            <div class="tf-cost-row tf-negative">
+                <span>Repair Kits</span>
+                <strong id="tf-cost-repairs">-0</strong>
+            </div>
+
+            <div class="tf-cost-row tf-negative">
+                <span>Cannon Wear</span>
+                <strong id="tf-cost-wear">Off</strong>
+            </div>
+
+            <div class="tf-cost-row tf-total">
+                <span>Net Gold</span>
+                <strong id="tf-cost-net">0</strong>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(
+        costWindow
+    );
+
+    const costWindowHeader =
+        costWindow.querySelector(
+            '#tf-cost-window-header'
+        );
+
+    const costWindowClose =
+        costWindow.querySelector(
+            '#tf-cost-window-close'
+        );
+
+    const costGrossElement =
+        costWindow.querySelector(
+            '#tf-cost-gross'
+        );
+
+    const costAmmoElement =
+        costWindow.querySelector(
+            '#tf-cost-ammo'
+        );
+
+    const costFoodElement =
+        costWindow.querySelector(
+            '#tf-cost-food'
+        );
+
+    const costRepairsElement =
+        costWindow.querySelector(
+            '#tf-cost-repairs'
+        );
+
+    const costWearElement =
+        costWindow.querySelector(
+            '#tf-cost-wear'
+        );
+
+    const costNetElement =
+        costWindow.querySelector(
+            '#tf-cost-net'
         );
 
     const startStopButton =
@@ -2050,14 +2298,8 @@
         source
     ) {
         if (
-            !TRACKED_IDS.has(
-                itemId
-            )
-        ) {
-            return;
-        }
-
-        if (
+            !Number.isFinite(itemId) ||
+            itemId <= 0 ||
             !Number.isFinite(price) ||
             price <= 0
         ) {
@@ -2882,6 +3124,177 @@
     let lastCannonLayoutSignature =
         '';
 
+    let cannonWearCombatActive =
+        false;
+
+    let cannonWearMeasurementPending =
+        false;
+
+    let cannonWearCost =
+        0;
+
+    const cannonWearBaseline =
+        new Map();
+
+    function getCannonWearKey(
+        slot
+    ) {
+        return [
+            slot?.dataset?.ship || '',
+            slot?.dataset?.slot || '',
+            slot?.dataset?.itemtype || ''
+        ].join(':');
+    }
+
+    function captureCannonWearBaseline() {
+        cannonWearBaseline.clear();
+
+        getCannonSlots().forEach(
+            slot => {
+                const label =
+                    slot.querySelector(
+                        ':scope > .tf-cannon-durability'
+                    );
+
+                const current =
+                    Number(
+                        label?.dataset?.current
+                    );
+
+                const maximum =
+                    Number(
+                        label?.dataset?.maximum
+                    );
+
+                const itemId =
+                    Number(
+                        slot.dataset.itemtype
+                    );
+
+                if (
+                    !Number.isFinite(current) ||
+                    !Number.isFinite(maximum) ||
+                    maximum <= 0 ||
+                    !Number.isFinite(itemId) ||
+                    itemId <= 0
+                ) {
+                    return;
+                }
+
+                cannonWearBaseline.set(
+                    getCannonWearKey(slot),
+                    {
+                        current,
+                        maximum,
+                        itemId
+                    }
+                );
+            }
+        );
+    }
+
+    function recordCannonWearMeasurement(
+        slot,
+        current,
+        maximum
+    ) {
+        if (
+            !cannonWearMeasurementPending ||
+            !settings.cannonWearCostsEnabled
+        ) {
+            return;
+        }
+
+        const key =
+            getCannonWearKey(
+                slot
+            );
+
+        const baseline =
+            cannonWearBaseline.get(
+                key
+            );
+
+        const itemId =
+            Number(
+                slot.dataset.itemtype
+            );
+
+        if (
+            !baseline ||
+            baseline.itemId !== itemId ||
+            !Number.isFinite(current) ||
+            !Number.isFinite(maximum) ||
+            maximum <= 0 ||
+            current >= baseline.current
+        ) {
+            return;
+        }
+
+        const price =
+            getCachedPrice(
+                itemId
+            );
+
+        if (price <= 0) {
+            return;
+        }
+
+        const durabilityLost =
+            baseline.current -
+            current;
+
+        cannonWearCost +=
+            durabilityLost /
+            maximum *
+            price;
+    }
+
+    function checkCannonWearLifecycle() {
+        const inCombat =
+            isActuallyInCombat();
+
+        if (
+            inCombat &&
+            !cannonWearCombatActive
+        ) {
+            cannonWearCombatActive =
+                true;
+
+            cannonWearMeasurementPending =
+                false;
+
+            captureCannonWearBaseline();
+
+            return;
+        }
+
+        if (
+            !inCombat &&
+            cannonWearCombatActive
+        ) {
+            cannonWearCombatActive =
+                false;
+
+            if (
+                settings.cannonWearCostsEnabled &&
+                cannonWearBaseline.size > 0
+            ) {
+                cannonWearMeasurementPending =
+                    true;
+
+                setTimeout(
+                    () => {
+                        void scanCannonDurability(
+                            true
+                        );
+                    },
+                    600
+                );
+            }
+        }
+    }
+
     function getCannonSlots() {
         return Array.from(
             document.querySelectorAll(
@@ -2954,6 +3367,12 @@
 
         label.dataset.maximum =
             String(maximum);
+
+        recordCannonWearMeasurement(
+            slot,
+            current,
+            maximum
+        );
 
         label.textContent =
             settings.cannonDurabilityMode ===
@@ -3283,6 +3702,17 @@
 
             cannonDurabilityScanning =
                 false;
+
+            if (
+                cannonWearMeasurementPending
+            ) {
+                cannonWearMeasurementPending =
+                    false;
+
+                captureCannonWearBaseline();
+
+                updateCombatDisplay();
+            }
         }
     }
 
@@ -3513,9 +3943,8 @@
                         );
 
                     if (
-                        !TRACKED_IDS.has(
-                            itemId
-                        )
+                        !Number.isFinite(itemId) ||
+                        itemId <= 0
                     ) {
                         return;
                     }
@@ -3841,7 +4270,69 @@
         );
     }
 
+    function getConsumedCostForIds(
+        idSet
+    ) {
+        if (
+            !settings.consumableCostsEnabled
+        ) {
+            return 0;
+        }
+
+        let total = 0;
+
+        consumedItems.forEach(
+            (
+                quantity,
+                itemId
+            ) => {
+                if (!idSet.has(itemId)) {
+                    return;
+                }
+
+                const price =
+                    sessionPrices.get(
+                        itemId
+                    ) ||
+                    getCachedPrice(
+                        itemId
+                    ) ||
+                    0;
+
+                total +=
+                    quantity *
+                    price;
+            }
+        );
+
+        return total;
+    }
+
+    function getAmmoCost() {
+        return getConsumedCostForIds(
+            AMMO_IDS
+        );
+    }
+
+    function getFoodCost() {
+        return getConsumedCostForIds(
+            FOOD_IDS
+        );
+    }
+
+    function getRepairCost() {
+        return getConsumedCostForIds(
+            REPAIR_IDS
+        );
+    }
+
     function getConsumableCost() {
+        if (
+            !settings.consumableCostsEnabled
+        ) {
+            return 0;
+        }
+
         let total = 0;
 
         consumedItems.forEach(
@@ -3866,6 +4357,12 @@
         );
 
         return total;
+    }
+
+    function getCannonWearCost() {
+        return settings.cannonWearCostsEnabled
+            ? cannonWearCost
+            : 0;
     }
 
     function checkForMissingPrices() {
@@ -3925,6 +4422,72 @@
     // COMBAT DISPLAY
     // =========================================================
 
+    function updateCostWindowDisplay(
+        net
+    ) {
+        costGrossElement.textContent =
+            `+${Math.round(
+                combatGrossGold
+            ).toLocaleString()}`;
+
+        costAmmoElement.textContent =
+            `-${Math.round(
+                getAmmoCost()
+            ).toLocaleString()}`;
+
+        costFoodElement.textContent =
+            `-${Math.round(
+                getFoodCost()
+            ).toLocaleString()}`;
+
+        costRepairsElement.textContent =
+            `-${Math.round(
+                getRepairCost()
+            ).toLocaleString()}`;
+
+        costWearElement.textContent =
+            settings.cannonWearCostsEnabled
+                ? `-${Math.round(
+                    getCannonWearCost()
+                ).toLocaleString()}`
+                : 'Off';
+
+        costNetElement.textContent =
+            net.toLocaleString();
+    }
+
+    function openCostWindow() {
+        costWindow.classList.add(
+            'tf-open'
+        );
+
+        costWindow.style.display =
+            'block';
+
+        costWindow.style.zIndex =
+            '10000000';
+
+        const net =
+            Math.round(
+                combatGrossGold -
+                getConsumableCost() -
+                getCannonWearCost()
+            );
+
+        updateCostWindowDisplay(
+            net
+        );
+    }
+
+    function closeCostWindow() {
+        costWindow.classList.remove(
+            'tf-open'
+        );
+
+        costWindow.style.display =
+            'none';
+    }
+
     function updateCombatDisplay() {
         killsElement.textContent =
             combatKills.toLocaleString();
@@ -3954,11 +4517,24 @@
         const net =
             Math.round(
                 combatGrossGold -
-                getConsumableCost()
+                getConsumableCost() -
+                getCannonWearCost()
             );
 
-        netGoldElement.textContent =
-            net.toLocaleString();
+        netGoldElement.childNodes[0].textContent =
+            `${net.toLocaleString()} `;
+
+        updateCostWindowDisplay(
+            net
+        );
+
+        netGoldElement.title =
+            [
+                `Gold earned: ${Math.round(combatGrossGold).toLocaleString()}`,
+                `Consumables: -${Math.round(getConsumableCost()).toLocaleString()}`,
+                `Cannon wear: -${Math.round(getCannonWearCost()).toLocaleString()}`,
+                `Net gold: ${net.toLocaleString()}`
+            ].join('\n');
 
         updateCombatHeaderLayout();
     }
@@ -4207,11 +4783,18 @@
         lastQuantities.clear();
         pendingItemDecreases.clear();
 
+        cannonWearCost = 0;
+        cannonWearBaseline.clear();
+        cannonWearMeasurementPending = false;
+        cannonWearCombatActive = false;
+
         processedVictories.clear();
         markCurrentVictoriesProcessed();
 
         lastCombatTime =
             0;
+
+        closeCostWindow();
 
         combatPanel.style.display =
             'none';
@@ -4266,6 +4849,32 @@
     // COMBAT BUTTONS
     // =========================================================
 
+    netGoldRow.addEventListener(
+        'click',
+        openCostWindow
+    );
+
+    netGoldRow.addEventListener(
+        'keydown',
+        event => {
+            if (
+                event.key !== 'Enter' &&
+                event.key !== ' '
+            ) {
+                return;
+            }
+
+            event.preventDefault();
+
+            openCostWindow();
+        }
+    );
+
+    costWindowClose.addEventListener(
+        'click',
+        closeCostWindow
+    );
+
     startStopButton.addEventListener(
         'click',
         () => {
@@ -4282,6 +4891,11 @@
                 sessionPrices.clear();
                 lastQuantities.clear();
                 pendingItemDecreases.clear();
+
+                cannonWearCost = 0;
+                cannonWearBaseline.clear();
+                cannonWearMeasurementPending = false;
+                cannonWearCombatActive = false;
 
                 processedVictories.clear();
                 markCurrentVictoriesProcessed();
@@ -6788,6 +7402,18 @@
             </span>
         `;
 
+        bar.querySelector(
+            '[data-kind="gold"]'
+        )?.addEventListener(
+            'click',
+            event => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                openCostWindow();
+            }
+        );
+
         combatHeaderLayout =
             bar;
 
@@ -6866,7 +7492,8 @@
         const net =
             Math.round(
                 combatGrossGold -
-                getConsumableCost()
+                getConsumableCost() -
+                getCannonWearCost()
             );
 
         combatHeaderLayout.querySelector(
@@ -7747,6 +8374,90 @@
         return group;
     }
 
+    function createVersionCard() {
+        const card =
+            document.createElement(
+                'div'
+            );
+
+        card.className =
+            'acp-card tf-firstmate-card';
+
+        const meta =
+            document.createElement(
+                'div'
+            );
+
+        meta.className =
+            'acp-card-meta';
+
+        meta.innerHTML = `
+            <div class="acp-card-title">
+                Tidefall First Mate
+            </div>
+
+            <div class="acp-card-desc">
+                Installed addon version.
+            </div>
+        `;
+
+        const cardBody =
+            document.createElement(
+                'div'
+            );
+
+        cardBody.className =
+            'acp-card-body tf-firstmate-version-card';
+
+        const version =
+            document.createElement(
+                'span'
+            );
+
+        version.className =
+            'tf-firstmate-version-value';
+
+        version.textContent =
+            `v${FIRST_MATE_VERSION}`;
+
+        const githubButton =
+            document.createElement(
+                'button'
+            );
+
+        githubButton.type =
+            'button';
+
+        githubButton.className =
+            'tf-firstmate-github-button';
+
+        githubButton.textContent =
+            'Open GitHub';
+
+        githubButton.addEventListener(
+            'click',
+            () => {
+                window.open(
+                    FIRST_MATE_GITHUB_URL,
+                    '_blank',
+                    'noopener,noreferrer'
+                );
+            }
+        );
+
+        cardBody.append(
+            version,
+            githubButton
+        );
+
+        card.append(
+            meta,
+            cardBody
+        );
+
+        return card;
+    }
+
     function createRefreshCard() {
         const card =
             document.createElement(
@@ -7949,6 +8660,72 @@
 
                         cardBody.appendChild(
                             hideDelayRow
+                        );
+
+                        const consumableCostsRow =
+                            document.createElement(
+                                'div'
+                            );
+
+                        consumableCostsRow.className =
+                            'tf-firstmate-toggle-row';
+
+                        consumableCostsRow.dataset.parentToggle =
+                            'combatTrackerEnabled';
+
+                        const consumableCostsLabel =
+                            document.createElement(
+                                'span'
+                            );
+
+                        consumableCostsLabel.className =
+                            'tf-firstmate-setting-label';
+
+                        consumableCostsLabel.textContent =
+                            'Consumable Costs';
+
+                        consumableCostsRow.append(
+                            consumableCostsLabel,
+                            createToggle(
+                                'consumableCostsEnabled'
+                            )
+                        );
+
+                        cardBody.appendChild(
+                            consumableCostsRow
+                        );
+
+                        const cannonWearCostsRow =
+                            document.createElement(
+                                'div'
+                            );
+
+                        cannonWearCostsRow.className =
+                            'tf-firstmate-toggle-row';
+
+                        cannonWearCostsRow.dataset.parentToggle =
+                            'combatTrackerEnabled';
+
+                        const cannonWearCostsLabel =
+                            document.createElement(
+                                'span'
+                            );
+
+                        cannonWearCostsLabel.className =
+                            'tf-firstmate-setting-label';
+
+                        cannonWearCostsLabel.textContent =
+                            'Cannon Wear Cost';
+
+                        cannonWearCostsRow.append(
+                            cannonWearCostsLabel,
+                            createToggle(
+                                'cannonWearCostsEnabled'
+                            )
+                        );
+
+                        cardBody.appendChild(
+                            cannonWearCostsRow
                         );
                     }
             })
@@ -8366,6 +9143,10 @@
         );
 
         displayGroup.appendChild(
+            createVersionCard()
+        );
+
+        displayGroup.appendChild(
             createRefreshCard()
         );
 
@@ -8457,100 +9238,6 @@
                     );
                 }
             );
-    }
-
-    // =========================================================
-    // FIRST MATE VERSION LINK
-    // =========================================================
-
-    function injectFirstMateVersionLink() {
-        const gameVersionButton =
-            document.getElementById(
-                'nav-version-link'
-            );
-
-        if (
-            !gameVersionButton ||
-            document.getElementById(
-                'firstmate-version-link'
-            )
-        ) {
-            return;
-        }
-
-        const wrapper =
-            document.createElement(
-                'div'
-            );
-
-        wrapper.id =
-            'firstmate-version-wrap';
-
-        Object.assign(
-            wrapper.style,
-            {
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                width: '100%',
-                marginBottom: '6px'
-            }
-        );
-
-        const button =
-            gameVersionButton.cloneNode(
-                true
-            );
-
-        button.id =
-            'firstmate-version-link';
-
-        button.type =
-            'button';
-
-        button.innerHTML =
-            `⚓ FIRST MATE<br><span style="font-size:85%;">v${FIRST_MATE_VERSION}</span>`;
-
-        button.removeAttribute(
-            'title'
-        );
-
-        button.setAttribute(
-            'aria-label',
-            'Open Tidefall First Mate on GitHub'
-        );
-
-        Object.assign(
-            button.style,
-            {
-                margin: '0',
-                padding: '0',
-                lineHeight: '1.15',
-                textAlign: 'center',
-                whiteSpace: 'nowrap'
-            }
-        );
-
-        button.addEventListener(
-            'click',
-            () => {
-                window.open(
-                    FIRST_MATE_GITHUB_URL,
-                    '_blank',
-                    'noopener,noreferrer'
-                );
-            }
-        );
-
-        gameVersionButton.parentNode
-            .insertBefore(
-                wrapper,
-                gameVersionButton
-            );
-
-        wrapper.appendChild(
-            button
-        );
     }
 
     // =========================================================
@@ -9035,6 +9722,12 @@
         true
     );
 
+
+    makePanelDraggable(
+        costWindow,
+        costWindowHeader
+    );
+
     // =========================================================
     // OBSERVERS
     // =========================================================
@@ -9043,7 +9736,6 @@
         new MutationObserver(
             () => {
                 injectFirstMateSettingsTab();
-                injectFirstMateVersionLink();
             }
         );
 
@@ -9129,6 +9821,11 @@
     );
 
     setInterval(
+        checkCannonWearLifecycle,
+        250
+    );
+
+    setInterval(
         () => {
             void applyStartupDisplayAndCamera();
 
@@ -9172,8 +9869,19 @@
 
     restoreActivityPanelPosition();
 
+    document
+        .getElementById(
+            'firstmate-version-wrap'
+        )
+        ?.remove();
+
+    document
+        .getElementById(
+            'firstmate-version-link'
+        )
+        ?.remove();
+
     injectFirstMateSettingsTab();
-    injectFirstMateVersionLink();
 
     scanMarketPrices();
 
