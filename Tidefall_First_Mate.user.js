@@ -23,7 +23,7 @@
 
     const FIRST_MATE_VERSION = '1.3.1';
     const FIRST_MATE_GITHUB_URL =
-        'https://github.com/UserFirstMate/tidefall-first-mate';
+        'https://github.com/UserCarl/tidefall-first-mate';
 
     const DEFAULT_SETTINGS = {
         combatTrackerEnabled: true,
