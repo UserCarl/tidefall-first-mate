@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.4.1
+// @version      1.4.2
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -21,7 +21,7 @@
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
 
-    const FIRST_MATE_VERSION = '1.4.1';
+    const FIRST_MATE_VERSION = '1.4.2';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -991,6 +991,38 @@
             text-align: center;
         }
 
+        .tf-community-warning-brand {
+            margin-bottom: 10px;
+            color: var(--gold, #c5a059);
+            font-family: var(--font-heading, "QuadraatOffcPro", Georgia, serif);
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: .04em;
+            line-height: 1.2;
+            text-transform: none;
+        }
+
+        .tf-community-warning-title {
+            color: #ff3b30;
+            font-family: var(--font-heading, "QuadraatOffcPro", Georgia, serif);
+            font-size: 22px;
+            font-weight: 900;
+            letter-spacing: .06em;
+            line-height: 1.2;
+            text-transform: uppercase;
+        }
+
+        .tf-community-warning-message {
+            margin-top: 6px;
+            color: var(--text-primary, #e8e0d0);
+            font-family: var(--font-body, "Gothic A1", sans-serif);
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0;
+            line-height: 1.35;
+            text-transform: none;
+        }
+
         #tf-price-warning {
             position: fixed;
 
@@ -1596,12 +1628,39 @@
     idleWarning.id =
         'tf-idle-warning';
 
-    idleWarning.textContent =
-        'YOU ARE IDLE';
+    idleWarning.innerHTML = `
+        <div class="tf-community-warning-brand">
+            ⚓ Tidefall First Mate - Community Addon
+        </div>
+
+        <div
+            id="tf-idle-warning-title"
+            class="tf-community-warning-title"
+        >
+            Idle Warning
+        </div>
+
+        <div
+            id="tf-idle-warning-message"
+            class="tf-community-warning-message"
+        >
+            No active task detected.
+        </div>
+    `;
 
     document.body.appendChild(
         idleWarning
     );
+
+    const idleWarningTitle =
+        idleWarning.querySelector(
+            '#tf-idle-warning-title'
+        );
+
+    const idleWarningMessage =
+        idleWarning.querySelector(
+            '#tf-idle-warning-message'
+        );
 
     const combatWarning =
         document.createElement('div');
@@ -1609,9 +1668,22 @@
     combatWarning.id =
         'tf-combat-warning';
 
+    combatWarning.innerHTML = `
+        <div class="tf-community-warning-brand">
+            ⚓ Tidefall First Mate - Community Addon
+        </div>
+
+        <div id="tf-combat-warning-content"></div>
+    `;
+
     document.body.appendChild(
         combatWarning
     );
+
+    const combatWarningContent =
+        combatWarning.querySelector(
+            '#tf-combat-warning-content'
+        );
 
     const priceWarning =
         document.createElement('div');
@@ -1620,18 +1692,33 @@
         'tf-price-warning';
 
     priceWarning.innerHTML = `
-        <div id="tf-price-warning-title">
-            PRICE MISSING
+        <div class="tf-community-warning-brand">
+            ⚓ Tidefall First Mate - Community Addon
         </div>
 
-        <div id="tf-price-warning-message">
-            Open Exchange to load item price
+        <div
+            id="tf-price-warning-title"
+            class="tf-community-warning-title"
+        >
+            Price Missing
+        </div>
+
+        <div
+            id="tf-price-warning-message"
+            class="tf-community-warning-message"
+        >
+            Open Exchange to load item price.
         </div>
     `;
 
     document.body.appendChild(
         priceWarning
     );
+
+    const priceWarningTitle =
+        priceWarning.querySelector(
+            '#tf-price-warning-title'
+        );
 
     const priceWarningMessage =
         priceWarning.querySelector(
@@ -2971,8 +3058,11 @@
             idleSeconds >= thresholdSeconds &&
             !idleWarningDismissed
         ) {
-            idleWarning.textContent =
-                'YOU ARE IDLE';
+            idleWarningTitle.textContent =
+                'Idle Warning';
+
+            idleWarningMessage.textContent =
+                `No active task detected for ${thresholdSeconds} seconds.`;
 
             idleWarning.style.display =
                 'block';
@@ -3010,7 +3100,12 @@
             hull !== null &&
             hull <= settings.hullWarningValue
         ) {
-            warnings.push('LOW HULL');
+            warnings.push({
+                key: 'LOW HULL',
+                title: 'Low Hull Warning',
+                message:
+                    `Hull integrity below ${settings.hullWarningValue}%.`
+            });
         }
 
         if (
@@ -3018,7 +3113,12 @@
             crew !== null &&
             crew <= settings.crewWarningValue
         ) {
-            warnings.push('LOW CREW');
+            warnings.push({
+                key: 'LOW CREW',
+                title: 'Low Crew Warning',
+                message:
+                    `Crew strength below ${settings.crewWarningValue}%.`
+            });
         }
 
         if (
@@ -3044,7 +3144,12 @@
                 ammo !== null &&
                 ammo <= settings.ammoWarningValue
             ) {
-                warnings.push('LOW AMMO');
+                warnings.push({
+                    key: 'LOW AMMO',
+                    title: 'Low Ammo Warning',
+                    message:
+                        `Ammunition at or below ${settings.ammoWarningValue} shots.`
+                });
             }
 
             if (
@@ -3052,7 +3157,14 @@
                 food !== null &&
                 food <= settings.foodWarningValue
             ) {
-                warnings.push('LOW FOOD');
+                warnings.push({
+                    key: 'LOW FOOD',
+                    title: 'Low Food Warning',
+                    message:
+                        settings.foodWarningValue <= 0
+                            ? 'No food remaining.'
+                            : `Food at or below ${settings.foodWarningValue}.`
+                });
             }
 
             if (
@@ -3060,7 +3172,14 @@
                 repairs !== null &&
                 repairs <= settings.repairWarningValue
             ) {
-                warnings.push('LOW REPAIR KITS');
+                warnings.push({
+                    key: 'LOW REPAIR KITS',
+                    title: 'Low Repair Kits Warning',
+                    message:
+                        settings.repairWarningValue <= 0
+                            ? 'No repair kits remaining.'
+                            : `Repair kits at or below ${settings.repairWarningValue}.`
+                });
             }
         }
 
@@ -3074,8 +3193,9 @@
         ).forEach(
             warning => {
                 if (
-                    !warnings.includes(
-                        warning
+                    !warnings.some(
+                        item =>
+                            item.key === warning
                     )
                 ) {
                     dismissedCombatWarnings.delete(
@@ -3086,13 +3206,15 @@
         );
 
         currentCombatWarnings =
-            warnings.slice();
+            warnings.map(
+                warning => warning.key
+            );
 
         const visibleWarnings =
             warnings.filter(
                 warning =>
                     !dismissedCombatWarnings.has(
-                        warning
+                        warning.key
                     )
             );
 
@@ -3104,8 +3226,22 @@
             return;
         }
 
-        combatWarning.innerHTML =
-            visibleWarnings.join('<br>');
+        combatWarningContent.innerHTML =
+            visibleWarnings
+                .map(
+                    warning => `
+                        <div class="tf-community-warning-title">
+                            ${warning.title}
+                        </div>
+
+                        <div class="tf-community-warning-message">
+                            ${warning.message}
+                        </div>
+                    `
+                )
+                .join(
+                    '<div style="height: 14px;"></div>'
+                );
 
         combatWarning.style.display =
             'block';
@@ -4564,8 +4700,11 @@
             return;
         }
 
+        priceWarningTitle.textContent =
+            'Price Missing';
+
         priceWarningMessage.textContent =
-            missing.join(', ');
+            `Open Exchange to load item price: ${missing.join(', ')}.`;
 
         priceWarning.style.display =
             'block';
