@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.4.2
+// @version      1.5.2
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -21,7 +21,7 @@
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
 
-    const FIRST_MATE_VERSION = '1.4.2';
+    const FIRST_MATE_VERSION = '1.5.2';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -55,6 +55,8 @@
         combatSessionLayout: 'header',
         pveTrackerHideDelaySeconds: 30,
         activityQueueRemaining: true,
+
+        skillProgressPercentEnabled: false,
 
         cannonDurabilityEnabled: true,
         cannonDurabilityMode: 'percent',
@@ -1173,6 +1175,32 @@
 
             pointer-events: auto;
             cursor: pointer;
+        }
+
+        .pp-skill-bottom {
+            position: relative;
+        }
+
+        .tf-skill-progress-percent {
+            margin-left: auto;
+            padding-left: 8px;
+
+            color:
+                var(--reward-xp, #aee67a);
+
+            font-family:
+                var(--font-body, "Gothic A1", sans-serif);
+
+            font-size: 11px;
+            font-weight: 800;
+            line-height: 1;
+
+            white-space: nowrap;
+            text-shadow:
+                0 1px 2px #000000;
+
+            pointer-events: none;
+            user-select: none;
         }
 
         .tf-cannon-durability {
@@ -3245,6 +3273,216 @@
 
         combatWarning.style.display =
             'block';
+    }
+
+    // =========================================================
+    // SKILL PROGRESS PERCENTAGE
+    // =========================================================
+
+    const skillProgressFillObservers =
+        new Map();
+
+    function getSkillProgressPercentFromFill(
+        fill
+    ) {
+        if (!(fill instanceof HTMLElement)) {
+            return null;
+        }
+
+        const inlineMatch =
+            String(
+                fill.style.width || ''
+            ).match(
+                /([0-9]+(?:\.[0-9]+)?)%/
+            );
+
+        if (!inlineMatch) {
+            return null;
+        }
+
+        return Math.max(
+            0,
+            Math.min(
+                100,
+                Math.round(
+                    Number(
+                        inlineMatch[1]
+                    )
+                )
+            )
+        );
+    }
+
+    function updateSkillProgressLabel(
+        fill
+    ) {
+        if (!(fill instanceof HTMLElement)) {
+            return;
+        }
+
+        const card =
+            fill.closest(
+                '.pp-skill-card[data-skill]'
+            );
+
+        if (!(card instanceof HTMLElement)) {
+            return;
+        }
+
+        const bottom =
+            card.querySelector(
+                '.pp-skill-bottom'
+            );
+
+        if (!(bottom instanceof HTMLElement)) {
+            return;
+        }
+
+        let label =
+            bottom.querySelector(
+                ':scope > .tf-skill-progress-percent'
+            );
+
+        if (
+            !settings.skillProgressPercentEnabled
+        ) {
+            label?.remove();
+            return;
+        }
+
+        const percent =
+            getSkillProgressPercentFromFill(
+                fill
+            );
+
+        if (percent === null) {
+            label?.remove();
+            return;
+        }
+
+        if (!label) {
+            label =
+                document.createElement(
+                    'div'
+                );
+
+            label.className =
+                'tf-skill-progress-percent';
+
+            bottom.appendChild(label);
+        }
+
+        const nextText =
+            `${percent}%`;
+
+        if (
+            label.textContent !==
+            nextText
+        ) {
+            label.textContent =
+                nextText;
+        }
+    }
+
+    function disconnectSkillProgressObservers() {
+        skillProgressFillObservers
+            .forEach(
+                observer =>
+                    observer.disconnect()
+            );
+
+        skillProgressFillObservers.clear();
+    }
+
+    function removeSkillProgressLabels() {
+        document
+            .querySelectorAll(
+                '.tf-skill-progress-percent'
+            )
+            .forEach(
+                label =>
+                    label.remove()
+            );
+    }
+
+    function bindSkillProgressBars() {
+        if (
+            !settings.skillProgressPercentEnabled
+        ) {
+            disconnectSkillProgressObservers();
+            removeSkillProgressLabels();
+            return;
+        }
+
+        const liveFills =
+            new Set(
+                document.querySelectorAll(
+                    '.pp-skill-card[data-skill] .pp-skill-bar-fill'
+                )
+            );
+
+        skillProgressFillObservers
+            .forEach(
+                (
+                    observer,
+                    fill
+                ) => {
+                    if (
+                        !fill.isConnected ||
+                        !liveFills.has(fill)
+                    ) {
+                        observer.disconnect();
+
+                        skillProgressFillObservers.delete(
+                            fill
+                        );
+                    }
+                }
+            );
+
+        liveFills.forEach(
+            fill => {
+                updateSkillProgressLabel(
+                    fill
+                );
+
+                if (
+                    skillProgressFillObservers.has(
+                        fill
+                    )
+                ) {
+                    return;
+                }
+
+                const observer =
+                    new MutationObserver(
+                        () => {
+                            updateSkillProgressLabel(
+                                fill
+                            );
+                        }
+                    );
+
+                observer.observe(
+                    fill,
+                    {
+                        attributes: true,
+                        attributeFilter: [
+                            'style'
+                        ]
+                    }
+                );
+
+                skillProgressFillObservers.set(
+                    fill,
+                    observer
+                );
+            }
+        );
+    }
+
+    function updateSkillProgressPercentages() {
+        bindSkillProgressBars();
     }
 
     // =========================================================
@@ -9366,6 +9604,19 @@
         activityGroup.appendChild(
             createSettingsCard({
                 title:
+                    'Skill Progress Percentage',
+
+                description:
+                    'Show the current percentage directly on each skill progress bar.',
+
+                toggleKey:
+                    'skillProgressPercentEnabled'
+            })
+        );
+
+        activityGroup.appendChild(
+            createSettingsCard({
+                title:
                     'Queue Remaining',
 
                 description:
@@ -9803,6 +10054,15 @@
         }
 
         if (
+            settings.skillProgressPercentEnabled
+        ) {
+            bindSkillProgressBars();
+        } else {
+            disconnectSkillProgressObservers();
+            removeSkillProgressLabels();
+        }
+
+        if (
             !settings
                 .cannonDurabilityEnabled
         ) {
@@ -10082,6 +10342,12 @@
                             if (getAccountNav()) {
                                 injectFirstMateSettingsTab();
                             }
+
+                            if (
+                                settings.skillProgressPercentEnabled
+                            ) {
+                                bindSkillProgressBars();
+                            }
                         },
                         100
                     );
@@ -10251,6 +10517,8 @@
     updateCombatButton();
 
     updateActivityDisplay();
+
+    bindSkillProgressBars();
 
     handleSettingsChanged();
 
