@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.6
-// @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
+// @version      1.6.4
+// @description  Combat tracker, combat warnings, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
 // @downloadURL  https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -21,14 +22,13 @@
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
 
-    const FIRST_MATE_VERSION = '1.5.3-test';
+    const FIRST_MATE_VERSION = '1.6.4';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
     const DEFAULT_SETTINGS = {
         combatTrackerEnabled: true,
         consumableCostsEnabled: true,
-        cannonWearCostsEnabled: false,
         combatWarningsEnabled: true,
 
         hullWarningEnabled: true,
@@ -58,11 +58,7 @@
 
         skillProgressPercentEnabled: false,
 
-        cannonDurabilityEnabled: true,
-        cannonDurabilityMode: 'percent',
 
-        startupZoomEnabled: false,
-        startupZoomPercent: 100,
 
         startupFollowShipEnabled: false
     };
@@ -1203,45 +1199,6 @@
             user-select: none;
         }
 
-        .tf-cannon-durability {
-            position: absolute;
-            left: 2px;
-            right: 2px;
-            bottom: 2px;
-            transform: translateY(4px);
-            z-index: 3;
-            padding: 1px 2px;
-            color: var(--text-primary, #e8e0d0);
-            background: rgba(5, 7, 10, .78);
-            border-radius: 3px;
-            font-size: 10px;
-            font-weight: 800;
-            line-height: 1.15;
-            text-align: center;
-            pointer-events: none;
-        }
-
-        .tf-cannon-durability.tf-cannon-durability--good {
-            color: #aee67a;
-        }
-
-        .tf-cannon-durability.tf-cannon-durability--warn {
-            color: #f0c45c;
-        }
-
-        .tf-cannon-durability.tf-cannon-durability--low {
-            color: #e86b60;
-        }
-
-        .sp-hold-slot.ph-lo-slot[data-slot][data-itemtype] {
-            position: relative;
-        }
-
-        body.tf-cannon-durability-scanning #inv-cargo-detail-modal {
-            opacity: 0 !important;
-            pointer-events: none !important;
-        }
-
         .tf-firstmate-settings-group {
             margin-bottom: 22px;
         }
@@ -2026,11 +1983,6 @@
                 <strong id="tf-cost-repairs">-0</strong>
             </div>
 
-            <div class="tf-cost-row tf-negative">
-                <span>Cannon Wear</span>
-                <strong id="tf-cost-wear">Off</strong>
-            </div>
-
             <div class="tf-cost-row tf-total">
                 <span>Net Gold</span>
                 <strong id="tf-cost-net">0</strong>
@@ -2070,11 +2022,6 @@
     const costRepairsElement =
         costWindow.querySelector(
             '#tf-cost-repairs'
-        );
-
-    const costWearElement =
-        costWindow.querySelector(
-            '#tf-cost-wear'
         );
 
     const costNetElement =
@@ -3486,790 +3433,6 @@
     }
 
     // =========================================================
-    // CANNON DURABILITY
-    // =========================================================
-
-    const CANNON_DURABILITY_SCAN_INTERVAL =
-        30000;
-
-    let cannonDurabilityScanning =
-        false;
-
-    let lastCannonLayoutSignature =
-        '';
-
-    let cannonWearCombatActive =
-        false;
-
-    let cannonWearMeasurementPending =
-        false;
-
-    let cannonWearCost =
-        0;
-
-    const cannonWearBaseline =
-        new Map();
-
-    const CANNON_SAFE_IDLE_MS =
-        5000;
-
-    let cannonSafeScanRequested =
-        true;
-
-    let cannonSafeScanReason =
-        'initial';
-
-    let lastUserInteractionAt =
-        Date.now();
-
-    let userPointerDown =
-        false;
-
-    function noteUserInteraction() {
-        lastUserInteractionAt =
-            Date.now();
-    }
-
-    document.addEventListener(
-        'pointerdown',
-        () => {
-            userPointerDown =
-                true;
-
-            noteUserInteraction();
-        },
-        true
-    );
-
-    document.addEventListener(
-        'pointerup',
-        () => {
-            userPointerDown =
-                false;
-
-            noteUserInteraction();
-        },
-        true
-    );
-
-    document.addEventListener(
-        'pointermove',
-        event => {
-            if (
-                userPointerDown ||
-                event.buttons !== 0
-            ) {
-                noteUserInteraction();
-            }
-        },
-        true
-    );
-
-    document.addEventListener(
-        'keydown',
-        noteUserInteraction,
-        true
-    );
-
-    document.addEventListener(
-        'wheel',
-        noteUserInteraction,
-        {
-            capture: true,
-            passive: true
-        }
-    );
-
-    function requestSafeCannonScan(
-        reason
-    ) {
-        cannonSafeScanRequested =
-            true;
-
-        cannonSafeScanReason =
-            reason || 'refresh';
-    }
-
-    function hasBeenIdleForSafeCannonScan() {
-        return (
-            !userPointerDown &&
-            Date.now() -
-                lastUserInteractionAt >=
-                CANNON_SAFE_IDLE_MS
-        );
-    }
-
-    function getCannonWearKey(
-        slot
-    ) {
-        return [
-            slot?.dataset?.ship || '',
-            slot?.dataset?.slot || '',
-            slot?.dataset?.itemtype || ''
-        ].join(':');
-    }
-
-    function captureCannonWearBaseline() {
-        cannonWearBaseline.clear();
-
-        getCannonSlots().forEach(
-            slot => {
-                const label =
-                    slot.querySelector(
-                        ':scope > .tf-cannon-durability'
-                    );
-
-                const current =
-                    Number(
-                        label?.dataset?.current
-                    );
-
-                const maximum =
-                    Number(
-                        label?.dataset?.maximum
-                    );
-
-                const itemId =
-                    Number(
-                        slot.dataset.itemtype
-                    );
-
-                if (
-                    !Number.isFinite(current) ||
-                    !Number.isFinite(maximum) ||
-                    maximum <= 0 ||
-                    !Number.isFinite(itemId) ||
-                    itemId <= 0
-                ) {
-                    return;
-                }
-
-                cannonWearBaseline.set(
-                    getCannonWearKey(slot),
-                    {
-                        current,
-                        maximum,
-                        itemId
-                    }
-                );
-            }
-        );
-    }
-
-    function recordCannonWearMeasurement(
-        slot,
-        current,
-        maximum
-    ) {
-        if (
-            !cannonWearMeasurementPending ||
-            !settings.cannonWearCostsEnabled
-        ) {
-            return;
-        }
-
-        const key =
-            getCannonWearKey(
-                slot
-            );
-
-        const baseline =
-            cannonWearBaseline.get(
-                key
-            );
-
-        const itemId =
-            Number(
-                slot.dataset.itemtype
-            );
-
-        if (
-            !baseline ||
-            baseline.itemId !== itemId ||
-            !Number.isFinite(current) ||
-            !Number.isFinite(maximum) ||
-            maximum <= 0 ||
-            current >= baseline.current
-        ) {
-            return;
-        }
-
-        const price =
-            getCachedPrice(
-                itemId
-            );
-
-        if (price <= 0) {
-            return;
-        }
-
-        const durabilityLost =
-            baseline.current -
-            current;
-
-        cannonWearCost +=
-            durabilityLost /
-            maximum *
-            price;
-    }
-
-    function checkCannonWearLifecycle() {
-        const inCombat =
-            isActuallyInCombat();
-
-        if (
-            inCombat &&
-            !cannonWearCombatActive
-        ) {
-            cannonWearCombatActive =
-                true;
-
-            cannonWearMeasurementPending =
-                false;
-
-            captureCannonWearBaseline();
-
-            return;
-        }
-
-        if (
-            !inCombat &&
-            cannonWearCombatActive
-        ) {
-            cannonWearCombatActive =
-                false;
-
-            if (
-                settings.cannonWearCostsEnabled &&
-                cannonWearBaseline.size > 0
-            ) {
-                cannonWearMeasurementPending =
-                    true;
-
-                requestSafeCannonScan(
-                    'post-combat'
-                );
-            } else {
-                requestSafeCannonScan(
-                    'baseline'
-                );
-            }
-        }
-    }
-
-    function getCannonSlots() {
-        return Array.from(
-            document.querySelectorAll(
-                '.sp-hold-slot.ph-lo-slot[data-slot][data-itemtype]'
-            )
-        ).filter(
-            slot =>
-                /^\d+$/.test(
-                    String(slot.dataset.slot || '')
-                )
-        );
-    }
-
-    function getCannonLayoutSignature() {
-        return getCannonSlots()
-            .map(
-                slot =>
-                    [
-                        slot.dataset.ship || '',
-                        slot.dataset.slot || '',
-                        slot.dataset.itemtype || ''
-                    ].join(':')
-            )
-            .join('|');
-    }
-
-    function addCannonDurabilityText(
-        slot,
-        current,
-        maximum
-    ) {
-        if (
-            !settings.cannonDurabilityEnabled ||
-            !slot ||
-            !Number.isFinite(current) ||
-            !Number.isFinite(maximum) ||
-            maximum <= 0
-        ) {
-            return;
-        }
-
-        const percent =
-            Math.max(
-                0,
-                Math.min(
-                    100,
-                    Math.round(
-                        current / maximum * 100
-                    )
-                )
-            );
-
-        let label =
-            slot.querySelector(
-                ':scope > .tf-cannon-durability'
-            );
-
-        if (!label) {
-            label =
-                document.createElement('div');
-
-            label.className =
-                'tf-cannon-durability';
-
-            slot.appendChild(label);
-        }
-
-        label.dataset.current =
-            String(current);
-
-        label.dataset.maximum =
-            String(maximum);
-
-        recordCannonWearMeasurement(
-            slot,
-            current,
-            maximum
-        );
-
-        label.textContent =
-            settings.cannonDurabilityMode ===
-                'raw'
-                ? `${current}/${maximum}`
-                : `${percent}%`;
-
-        label.title =
-            `Cannon condition: ${current.toLocaleString()} / ${maximum.toLocaleString()}`;
-
-        label.classList.remove(
-            'tf-cannon-durability--good',
-            'tf-cannon-durability--warn',
-            'tf-cannon-durability--low'
-        );
-
-        label.classList.add(
-            percent <= 25
-                ? 'tf-cannon-durability--low'
-                : percent <= 50
-                    ? 'tf-cannon-durability--warn'
-                    : 'tf-cannon-durability--good'
-        );
-    }
-
-    function refreshCannonDurabilityDisplay() {
-        const labels =
-            document.querySelectorAll(
-                '.tf-cannon-durability'
-            );
-
-        if (
-            !settings.cannonDurabilityEnabled
-        ) {
-            labels.forEach(
-                label => label.remove()
-            );
-
-            lastCannonLayoutSignature =
-                '';
-
-            return;
-        }
-
-        labels.forEach(
-            label => {
-                const current =
-                    Number(
-                        label.dataset.current
-                    );
-
-                const maximum =
-                    Number(
-                        label.dataset.maximum
-                    );
-
-                if (
-                    Number.isFinite(current) &&
-                    Number.isFinite(maximum) &&
-                    maximum > 0
-                ) {
-                    const slot =
-                        label.closest(
-                            '.sp-hold-slot.ph-lo-slot[data-slot][data-itemtype]'
-                        );
-
-                    addCannonDurabilityText(
-                        slot,
-                        current,
-                        maximum
-                    );
-                }
-            }
-        );
-
-        /*
-         * TEST: Do not automatically click cannon slots when labels
-         * are missing. This isolates map-input interference.
-         */
-    }
-
-    function readConditionFromCannonModal() {
-        const modal =
-            document.querySelector(
-                '#inv-cargo-detail-modal'
-            );
-
-        if (!modal) {
-            return null;
-        }
-
-        const rows =
-            Array.from(
-                modal.querySelectorAll(
-                    '.ms-item-stats__col'
-                )
-            );
-
-        const conditionRow =
-            rows.find(
-                row =>
-                    row.querySelector(
-                        '.ms-item-stats__label'
-                    )?.textContent
-                        ?.trim()
-                        ?.toLowerCase() ===
-                    'condition'
-            );
-
-        const text =
-            conditionRow?.querySelector(
-                '.ms-item-stats__value'
-            )?.textContent?.trim() || '';
-
-        const match =
-            text
-                .replace(/,/g, '')
-                .match(
-                    /(\d+)\s*\/\s*(\d+)/
-                );
-
-        if (!match) {
-            return null;
-        }
-
-        const current =
-            Number(match[1]);
-
-        const maximum =
-            Number(match[2]);
-
-        if (
-            !Number.isFinite(current) ||
-            !Number.isFinite(maximum) ||
-            maximum <= 0
-        ) {
-            return null;
-        }
-
-        return {
-            current,
-            maximum
-        };
-    }
-
-    function isFirstMateSafeToScanCannons() {
-        /*
-         * Only automate cannon-slot clicks after the page has
-         * been idle. Account settings, active pointer input,
-         * combat, and unrelated Tidefall windows block the scan.
-         */
-        if (
-            !hasBeenIdleForSafeCannonScan() ||
-            getAccountNav() ||
-            isActuallyInCombat()
-        ) {
-            return false;
-        }
-
-        const visibleModal = Array.from(
-            document.querySelectorAll(
-                '[role="dialog"], .modal, .panel-modal, .dialog, #inventory-panel'
-            )
-        ).some(
-            element =>
-                element.id !== 'inv-cargo-detail-modal' &&
-                isVisibleElement(element)
-        );
-
-        return !visibleModal;
-    }
-
-    function closeCannonDetailModal() {
-        const modal =
-            document.querySelector(
-                '#inv-cargo-detail-modal'
-            );
-
-        if (!modal) {
-            return;
-        }
-
-        const closeButton =
-            modal.querySelector(
-                '[aria-label="Close"], [title="Close"], .ms-close, .modal-close'
-            );
-
-        if (closeButton instanceof HTMLElement) {
-            closeButton.click();
-            return;
-        }
-
-        const backdrop =
-            modal.querySelector(
-                '.ms-backdrop'
-            );
-
-        if (backdrop instanceof HTMLElement) {
-            backdrop.click();
-            return;
-        }
-
-        /*
-         * Do not dispatch a global Escape key. Tidefall can treat
-         * that as a request to close the account/settings panel or
-         * another native window.
-         */
-    }
-
-    function waitForCannonCondition(
-        timeoutMs = 1200
-    ) {
-        return new Promise(
-            resolve => {
-                const started =
-                    Date.now();
-
-                const check =
-                    () => {
-                        const condition =
-                            readConditionFromCannonModal();
-
-                        if (condition) {
-                            resolve(condition);
-                            return;
-                        }
-
-                        if (
-                            Date.now() - started >=
-                            timeoutMs
-                        ) {
-                            resolve(null);
-                            return;
-                        }
-
-                        setTimeout(check, 40);
-                    };
-
-                check();
-            }
-        );
-    }
-
-    async function scanCannonDurability(
-        force = false
-    ) {
-        if (
-            !settings.cannonDurabilityEnabled ||
-            cannonDurabilityScanning ||
-            isActuallyInCombat() ||
-            !isFirstMateSafeToScanCannons()
-        ) {
-            return false;
-        }
-
-        const slots =
-            getCannonSlots();
-
-        if (slots.length === 0) {
-            lastCannonLayoutSignature = '';
-            return false;
-        }
-
-        if (
-            document.querySelector(
-                '#inv-cargo-detail-modal'
-            )
-        ) {
-            return false;
-        }
-
-        const signature =
-            getCannonLayoutSignature();
-
-        if (
-            !force &&
-            signature &&
-            signature === lastCannonLayoutSignature &&
-            slots.every(
-                slot =>
-                    slot.querySelector(
-                        ':scope > .tf-cannon-durability'
-                    )
-            )
-        ) {
-            return false;
-        }
-
-        cannonDurabilityScanning =
-            true;
-
-        document.body.classList.add(
-            'tf-cannon-durability-scanning'
-        );
-
-        try {
-            const scanInteractionBaseline =
-                lastUserInteractionAt;
-
-            const orderedSlots =
-                slots.slice().sort(
-                    (a, b) =>
-                        Number(a.dataset.slot) -
-                        Number(b.dataset.slot)
-                );
-
-            for (const slot of orderedSlots) {
-                if (
-                    isActuallyInCombat() ||
-                    userPointerDown ||
-                    lastUserInteractionAt !==
-                        scanInteractionBaseline
-                ) {
-                    return false;
-                }
-
-                slot.click();
-
-                const condition =
-                    await waitForCannonCondition();
-
-                if (condition) {
-                    addCannonDurabilityText(
-                        slot,
-                        condition.current,
-                        condition.maximum
-                    );
-                }
-
-                closeCannonDetailModal();
-
-                await new Promise(
-                    resolve =>
-                        setTimeout(resolve, 80)
-                );
-            }
-
-            lastCannonLayoutSignature =
-                getCannonLayoutSignature();
-
-            return true;
-        } catch (error) {
-            console.warn(
-                '[FirstMate Tools] Cannon durability scan failed:',
-                error
-            );
-
-            return false;
-        } finally {
-            closeCannonDetailModal();
-
-            document.body.classList.remove(
-                'tf-cannon-durability-scanning'
-            );
-
-            cannonDurabilityScanning =
-                false;
-
-        }
-    }
-
-    function checkForNewCannonLayout() {
-        if (
-            !settings.cannonDurabilityEnabled ||
-            cannonDurabilityScanning ||
-            isActuallyInCombat()
-        ) {
-            return;
-        }
-
-        const signature =
-            getCannonLayoutSignature();
-
-        if (!signature) {
-            lastCannonLayoutSignature =
-                '';
-
-            return;
-        }
-
-        if (
-            signature !==
-                lastCannonLayoutSignature
-        ) {
-            requestSafeCannonScan(
-                'layout'
-            );
-        }
-    }
-
-    async function processSafeCannonScanRequest() {
-        if (
-            !cannonSafeScanRequested ||
-            cannonDurabilityScanning ||
-            !isFirstMateSafeToScanCannons()
-        ) {
-            return;
-        }
-
-        const reason =
-            cannonSafeScanReason;
-
-        const completed =
-            await scanCannonDurability(
-                true
-            );
-
-        if (!completed) {
-            return;
-        }
-
-        cannonSafeScanRequested =
-            false;
-
-        cannonSafeScanReason =
-            '';
-
-        if (
-            reason === 'post-combat' &&
-            cannonWearMeasurementPending
-        ) {
-            cannonWearMeasurementPending =
-                false;
-
-            captureCannonWearBaseline();
-
-            updateCombatDisplay();
-        } else if (
-            cannonWearBaseline.size === 0
-        ) {
-            captureCannonWearBaseline();
-        }
-    }
-
-    // =========================================================
     // SKILL HELPERS
     // =========================================================
 
@@ -4886,12 +4049,6 @@
         return total;
     }
 
-    function getCannonWearCost() {
-        return settings.cannonWearCostsEnabled
-            ? cannonWearCost
-            : 0;
-    }
-
     function checkForMissingPrices() {
         if (
             !combatRunning ||
@@ -4975,13 +4132,6 @@
                 getRepairCost()
             ).toLocaleString()}`;
 
-        costWearElement.textContent =
-            settings.cannonWearCostsEnabled
-                ? `-${Math.round(
-                    getCannonWearCost()
-                ).toLocaleString()}`
-                : 'Off';
-
         costNetElement.textContent =
             net.toLocaleString();
     }
@@ -5000,8 +4150,7 @@
         const net =
             Math.round(
                 combatGrossGold -
-                getConsumableCost() -
-                getCannonWearCost()
+                getConsumableCost()
             );
 
         updateCostWindowDisplay(
@@ -5047,8 +4196,7 @@
         const net =
             Math.round(
                 combatGrossGold -
-                getConsumableCost() -
-                getCannonWearCost()
+                getConsumableCost()
             );
 
         netGoldElement.childNodes[0].textContent =
@@ -5062,7 +4210,6 @@
             [
                 `Gold earned: ${Math.round(combatGrossGold).toLocaleString()}`,
                 `Consumables: -${Math.round(getConsumableCost()).toLocaleString()}`,
-                `Cannon wear: -${Math.round(getCannonWearCost()).toLocaleString()}`,
                 `Net gold: ${net.toLocaleString()}`
             ].join('\n');
 
@@ -5313,10 +4460,6 @@
         lastQuantities.clear();
         pendingItemDecreases.clear();
 
-        cannonWearCost = 0;
-        cannonWearBaseline.clear();
-        cannonWearMeasurementPending = false;
-        cannonWearCombatActive = false;
 
         processedVictories.clear();
         markCurrentVictoriesProcessed();
@@ -5422,11 +4565,7 @@
                 lastQuantities.clear();
                 pendingItemDecreases.clear();
 
-                cannonWearCost = 0;
-                cannonWearBaseline.clear();
-                cannonWearMeasurementPending = false;
-                cannonWearCombatActive = false;
-
+                                
                 processedVictories.clear();
                 markCurrentVictoriesProcessed();
 
@@ -7435,11 +6574,8 @@
     );
 
     // =========================================================
-    // STARTUP DISPLAY & CAMERA
+    // STARTUP FOLLOW SHIP
     // =========================================================
-
-    let startupZoomApplied =
-        false;
 
     let startupFollowShipApplied =
         false;
@@ -7459,47 +6595,6 @@
     const STARTUP_CAMERA_DELAY_MS =
         6000;
 
-    function clampStartupZoomPercent(
-        value
-    ) {
-        const numeric =
-            Number(value);
-
-        if (
-            !Number.isFinite(numeric)
-        ) {
-            return 100;
-        }
-
-        return Math.max(
-            0,
-            Math.min(
-                100,
-                Math.round(
-                    numeric * 2
-                ) / 2
-            )
-        );
-    }
-
-    function getStartupZoomOutClicks(
-        percent
-    ) {
-        const clamped =
-            clampStartupZoomPercent(
-                percent
-            );
-
-        /*
-         * 0%   = fully zoomed in
-         * 100% = fully zoomed out
-         */
-        return Math.round(
-            clamped /
-            12.5
-        );
-    }
-
     function waitMilliseconds(
         milliseconds
     ) {
@@ -7510,82 +6605,6 @@
                     milliseconds
                 )
         );
-    }
-
-    async function applyStartupZoomOnce() {
-        if (
-            startupZoomApplied ||
-            !settings.startupZoomEnabled
-        ) {
-            return;
-        }
-
-        const zoomInButton =
-            document.querySelector(
-                '#map-btn-zoom-in'
-            );
-
-        const zoomOutButton =
-            document.querySelector(
-                '#map-btn-zoom-out'
-            );
-
-        if (
-            !(zoomInButton instanceof HTMLElement) ||
-            !(zoomOutButton instanceof HTMLElement)
-        ) {
-            return;
-        }
-
-        /*
-         * Tidefall can render the map buttons before the
-         * camera listeners are fully ready. Wait for the
-         * startup delay, then pace every camera click.
-         */
-        /*
-         * Wait until Tidefall has finished applying its own
-         * startup camera state, then normalize to fully zoomed
-         * in and move outward to the saved notch.
-         */
-        for (
-            let index = 0;
-            index < 8;
-            index += 1
-        ) {
-            zoomInButton.click();
-
-            await waitMilliseconds(
-                140
-            );
-        }
-
-        /*
-         * Give the camera a moment to settle at the known
-         * fully zoomed-in endpoint before moving outward.
-         */
-        await waitMilliseconds(
-            500
-        );
-
-        const zoomOutClicks =
-            getStartupZoomOutClicks(
-                settings.startupZoomPercent
-            );
-
-        for (
-            let index = 0;
-            index < zoomOutClicks;
-            index += 1
-        ) {
-            zoomOutButton.click();
-
-            await waitMilliseconds(
-                140
-            );
-        }
-
-        startupZoomApplied =
-            true;
     }
 
     async function enableFollowShipAfterSailing() {
@@ -7841,20 +6860,12 @@
 
     async function applyStartupDisplayAndCamera() {
         if (
-            startupSequenceRunning
+            startupSequenceRunning ||
+            startupFollowShipApplied ||
+            !settings.startupFollowShipEnabled
         ) {
             return;
         }
-
-        const zoomInButton =
-            document.querySelector(
-                '#map-btn-zoom-in'
-            );
-
-        const zoomOutButton =
-            document.querySelector(
-                '#map-btn-zoom-out'
-            );
 
         const followButton =
             document.querySelector(
@@ -7862,8 +6873,6 @@
             );
 
         if (
-            !(zoomInButton instanceof HTMLElement) ||
-            !(zoomOutButton instanceof HTMLElement) ||
             !(followButton instanceof HTMLElement)
         ) {
             startupControlsFirstSeenAt =
@@ -7890,29 +6899,10 @@
             return;
         }
 
-        if (
-            (
-                startupZoomApplied ||
-                !settings.startupZoomEnabled
-            ) &&
-            (
-                startupFollowShipApplied ||
-                !settings.startupFollowShipEnabled
-            )
-        ) {
-            return;
-        }
-
         startupSequenceRunning =
             true;
 
         try {
-            await applyStartupZoomOnce();
-
-            await waitMilliseconds(
-                250
-            );
-
             await applyStartupFollowShipOnce();
         } finally {
             startupSequenceRunning =
@@ -8054,8 +7044,7 @@
         const net =
             Math.round(
                 combatGrossGold -
-                getConsumableCost() -
-                getCannonWearCost()
+                getConsumableCost()
             );
 
         combatHeaderLayout.querySelector(
@@ -8569,125 +7558,6 @@
     }
 
 
-    function createSliderInput(
-        settingKey,
-        min,
-        max,
-        step,
-        suffix = ''
-    ) {
-        const wrapper =
-            document.createElement(
-                'div'
-            );
-
-        wrapper.className =
-            'tf-firstmate-slider-wrap';
-
-        const input =
-            document.createElement(
-                'input'
-            );
-
-        input.type =
-            'range';
-
-        input.min =
-            String(min);
-
-        input.max =
-            String(max);
-
-        input.step =
-            String(step);
-
-        input.className =
-            'tf-firstmate-slider';
-
-        input.dataset.setting =
-            settingKey;
-
-        input.value =
-            settings[settingKey];
-
-        const valueElement =
-            document.createElement(
-                'span'
-            );
-
-        valueElement.className =
-            'tf-firstmate-slider-value';
-
-        const refreshValue =
-            () => {
-                valueElement.textContent =
-                    `${input.value}${suffix}`;
-            };
-
-        refreshValue();
-
-        input.addEventListener(
-            'input',
-            () => {
-                refreshValue();
-            }
-        );
-
-        input.addEventListener(
-            'change',
-            () => {
-                let value =
-                    Number(
-                        input.value
-                    );
-
-                if (
-                    !Number.isFinite(value)
-                ) {
-                    value =
-                        DEFAULT_SETTINGS[
-                            settingKey
-                        ];
-                }
-
-                value =
-                    Math.max(
-                        min,
-                        Math.min(
-                            max,
-                            value
-                        )
-                    );
-
-                if (
-                    step === 12.5
-                ) {
-                    value =
-                        Math.round(
-                            value / 12.5
-                        ) * 12.5;
-                }
-
-                updateSetting(
-                    settingKey,
-                    value
-                );
-
-                input.value =
-                    String(value);
-
-                refreshValue();
-            }
-        );
-
-        wrapper.append(
-            input,
-            valueElement
-        );
-
-        return wrapper;
-    }
-
     function createSelect(
         settingKey,
         options
@@ -8744,13 +7614,6 @@
                 );
 
                 updateActivityDisplay();
-
-                if (
-                    settingKey ===
-                    'cannonDurabilityMode'
-                ) {
-                    refreshCannonDurabilityDisplay();
-                }
 
                 if (
                     settingKey ===
@@ -9260,38 +8123,6 @@
                             consumableCostsRow
                         );
 
-                        const cannonWearCostsRow =
-                            document.createElement(
-                                'div'
-                            );
-
-                        cannonWearCostsRow.className =
-                            'tf-firstmate-toggle-row';
-
-                        cannonWearCostsRow.dataset.parentToggle =
-                            'combatTrackerEnabled';
-
-                        const cannonWearCostsLabel =
-                            document.createElement(
-                                'span'
-                            );
-
-                        cannonWearCostsLabel.className =
-                            'tf-firstmate-setting-label';
-
-                        cannonWearCostsLabel.textContent =
-                            'Cannon Wear Cost';
-
-                        cannonWearCostsRow.append(
-                            cannonWearCostsLabel,
-                            createToggle(
-                                'cannonWearCostsEnabled'
-                            )
-                        );
-
-                        cardBody.appendChild(
-                            cannonWearCostsRow
-                        );
                     }
             })
         );
@@ -9418,70 +8249,7 @@
             })
         );
 
-        combatGroup.appendChild(
-            createSettingsCard({
-                title:
-                    'Cannon Durability',
 
-                description:
-                    'Show each cannon\'s current condition directly below its slot.',
-
-                toggleKey:
-                    'cannonDurabilityEnabled',
-
-                extraContent:
-                    cardBody => {
-
-                        const row =
-                            document.createElement(
-                                'div'
-                            );
-
-                        row.className =
-                            'tf-firstmate-select-row';
-
-                        row.dataset
-                            .parentToggle =
-                            'cannonDurabilityEnabled';
-
-                        const label =
-                            document.createElement(
-                                'span'
-                            );
-
-                        label.className =
-                            'tf-firstmate-setting-label';
-
-                        label.textContent =
-                            'Display';
-
-                        row.append(
-                            label,
-                            createSelect(
-                                'cannonDurabilityMode',
-                                [
-                                    {
-                                        value:
-                                            'percent',
-                                        label:
-                                            'Percentage'
-                                    },
-                                    {
-                                        value:
-                                            'raw',
-                                        label:
-                                            'Current / Max'
-                                    }
-                                ]
-                            )
-                        );
-
-                        cardBody.appendChild(
-                            row
-                        );
-                    }
-            })
-        );
 
         const activityGroup =
             createSettingsGroup(
@@ -9651,61 +8419,6 @@
             createSettingsGroup(
                 'Display & Camera'
             );
-
-        displayGroup.appendChild(
-            createSettingsCard({
-                title:
-                    'Startup Zoom',
-
-                description:
-                    'Apply the saved camera zoom once when Tidefall loads using one of 9 fixed zoom notches. 0% is fully zoomed in and 100% is fully zoomed out. Manual changes are left alone until the next refresh.',
-
-                toggleKey:
-                    'startupZoomEnabled',
-
-                extraContent:
-                    cardBody => {
-
-                        const row =
-                            document.createElement(
-                                'div'
-                            );
-
-                        row.className =
-                            'tf-firstmate-select-row';
-
-                        row.dataset
-                            .parentToggle =
-                            'startupZoomEnabled';
-
-                        const label =
-                            document.createElement(
-                                'span'
-                            );
-
-                        label.className =
-                            'tf-firstmate-setting-label';
-
-                        label.textContent =
-                            'Zoom';
-
-                        row.append(
-                            label,
-                            createSliderInput(
-                                'startupZoomPercent',
-                                0,
-                                100,
-                                12.5,
-                                '%'
-                            )
-                        );
-
-                        cardBody.appendChild(
-                            row
-                        );
-                    }
-            })
-        );
 
         displayGroup.appendChild(
             createSettingsCard({
@@ -10060,29 +8773,6 @@
         } else {
             disconnectSkillProgressObservers();
             removeSkillProgressLabels();
-        }
-
-        if (
-            !settings
-                .cannonDurabilityEnabled
-        ) {
-            document
-                .querySelectorAll(
-                    '.tf-cannon-durability'
-                )
-                .forEach(
-                    label =>
-                        label.remove()
-                );
-
-            lastCannonLayoutSignature =
-                '';
-        } else {
-            refreshCannonDurabilityDisplay();
-
-            requestSafeCannonScan(
-                'enabled'
-            );
         }
 
         checkCombatWarnings();
@@ -10444,23 +9134,6 @@
 
 
     setInterval(
-        checkForNewCannonLayout,
-        1000
-    );
-
-    setInterval(
-        () => {
-            void processSafeCannonScanRequest();
-        },
-        1000
-    );
-
-    setInterval(
-        checkCannonWearLifecycle,
-        250
-    );
-
-    setInterval(
         () => {
             void applyStartupDisplayAndCamera();
         },
@@ -10523,11 +9196,6 @@
     handleSettingsChanged();
 
     checkIdleWarning();
-
-    requestSafeCannonScan(
-        'initial'
-    );
-
 
 
     void applyStartupDisplayAndCamera();
