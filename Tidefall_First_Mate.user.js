@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.5.2
+// @version      1.5.3
 // @description  Combat tracker, combat warnings, cannon durability, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @match        https://www.playtidefall.com/*
 // @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
@@ -21,7 +21,7 @@
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
 
-    const FIRST_MATE_VERSION = '1.5.2';
+    const FIRST_MATE_VERSION = '1.5.3-test';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -7196,9 +7196,9 @@
             'grid';
 
         activityQueueRemainingElement.textContent =
-            `${queueCountdownApproximate ? '~' : ''}${formatDuration(
+            formatDuration(
                 remainingSeconds
-            )}`;
+            );
     }
 
     // =========================================================
