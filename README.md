@@ -10,8 +10,6 @@ Tidefall First Mate is a Tampermonkey userscript for [Tidefall](https://www.play
 * Combat warnings for low hull, crew, ammo, food, and repair kits
 * Click-to-dismiss warnings that rearm after the condition clears
 * Hull and crew warning thresholds can use Percentage or Current / Max
-* Cannon durability display with Percentage or Current / Max modes
-* Cannon durability can be disabled
 
 ### Activity tools
 
@@ -22,13 +20,6 @@ Tidefall First Mate is a Tampermonkey userscript for [Tidefall](https://www.play
 
 ### Display and camera
 
-* Startup Zoom
-
-  * Disabled by default
-  * Nine fixed positions from 0% to 100%
-  * 0% = fully zoomed in
-  * 100% = fully zoomed out
-  * Applied only during startup, then manual camera changes are left alone
 * Startup Follow Ship
 
   * Can enable Follow Ship when Tidefall loads
