@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.6.4
+// @version      1.7
 // @description  Combat tracker, combat warnings, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -22,7 +22,7 @@
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
 
-    const FIRST_MATE_VERSION = '1.6.4';
+    const FIRST_MATE_VERSION = '1.7';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -200,13 +200,28 @@
             nodeElement?.dataset?.activityNodeId ||
             '';
 
+        /*
+         * Keep history separate for every recipe. A node can host
+         * several activities with different XP and cycle times, so
+         * using the node ID by itself blends unrelated recipes and
+         * produces incorrect time-to-level estimates.
+         */
+        const normalizedSkill =
+            normalizeActivityKeyPart(skill);
+
+        const normalizedTask =
+            normalizeActivityKeyPart(taskName);
+
         if (nodeId) {
-            return `node:${normalizeActivityKeyPart(nodeId)}`;
+            return (
+                `taskv2:node:${normalizeActivityKeyPart(nodeId)}:` +
+                `${normalizedSkill}:${normalizedTask}`
+            );
         }
 
         return (
-            `task:${normalizeActivityKeyPart(skill)}:` +
-            normalizeActivityKeyPart(taskName)
+            `taskv2:${normalizedSkill}:` +
+            normalizedTask
         );
     }
 
@@ -256,6 +271,111 @@
      */
     const ACTIVITY_ESTIMATE_REFRESH_MS =
         5 * 60 * 1000;
+
+
+    /*
+     * Base activity data supplied by the Tidefall profession table.
+     * Exact observed values always take priority because city bonuses,
+     * mastery XP, and other modifiers can change the displayed result.
+     */
+    const BASE_ACTIVITY_RECIPES = {
+        pine_log: { skill: 'logging', xp: 2, seconds: 6 },
+        oak_log: { skill: 'logging', xp: 5, seconds: 10 },
+        willow_log: { skill: 'logging', xp: 8, seconds: 14 },
+        maple_log: { skill: 'logging', xp: 12, seconds: 18 },
+        teak_log: { skill: 'logging', xp: 18, seconds: 22 },
+        mahogany_log: { skill: 'logging', xp: 25, seconds: 30 },
+        yew_log: { skill: 'logging', xp: 32, seconds: 38 },
+        blackwood_log: { skill: 'logging', xp: 40, seconds: 46 },
+        ironbark_log: { skill: 'logging', xp: 50, seconds: 52 },
+        elderwood_log: { skill: 'logging', xp: 60, seconds: 60 },
+
+        copper_ore: { skill: 'mining', xp: 2, seconds: 8 },
+        iron_ore: { skill: 'mining', xp: 5, seconds: 15 },
+        cinder_ore: { skill: 'mining', xp: 10, seconds: 23 },
+        darkiron_ore: { skill: 'mining', xp: 15, seconds: 27 },
+        mithril_ore: { skill: 'mining', xp: 21, seconds: 31 },
+        adamantite_ore: { skill: 'mining', xp: 27, seconds: 36 },
+        starmetal_ore: { skill: 'mining', xp: 35, seconds: 40 },
+        stormglass_ore: { skill: 'mining', xp: 42, seconds: 44 },
+        leviathan_ore: { skill: 'mining', xp: 49, seconds: 50 },
+        abyssal_ore: { skill: 'mining', xp: 60, seconds: 60 },
+
+        mackerel: { skill: 'fishing', xp: 2, seconds: 7 },
+        sardine: { skill: 'fishing', xp: 6, seconds: 12 },
+        cod: { skill: 'fishing', xp: 8, seconds: 14 },
+        salmon: { skill: 'fishing', xp: 13, seconds: 18 },
+        tuna: { skill: 'fishing', xp: 16, seconds: 21 },
+        swordfish: { skill: 'fishing', xp: 22, seconds: 27 },
+        shark: { skill: 'fishing', xp: 27, seconds: 31 },
+        deepfin_tuna: { skill: 'fishing', xp: 35, seconds: 40 },
+        stormray: { skill: 'fishing', xp: 40, seconds: 41 },
+        dreadwhale: { skill: 'fishing', xp: 55, seconds: 45 },
+
+        pine_plank: { skill: 'carpentry', xp: 2, seconds: 6 },
+        pine_beam: { skill: 'carpentry', xp: 4, seconds: 12 },
+        oak_plank: { skill: 'carpentry', xp: 5, seconds: 10 },
+        oak_beam: { skill: 'carpentry', xp: 10, seconds: 20 },
+        willow_plank: { skill: 'carpentry', xp: 8, seconds: 14 },
+        willow_beam: { skill: 'carpentry', xp: 16, seconds: 28 },
+        maple_plank: { skill: 'carpentry', xp: 12, seconds: 18 },
+        maple_beam: { skill: 'carpentry', xp: 24, seconds: 36 },
+        teak_plank: { skill: 'carpentry', xp: 18, seconds: 22 },
+        teak_beam: { skill: 'carpentry', xp: 36, seconds: 44 },
+        mahogany_plank: { skill: 'carpentry', xp: 25, seconds: 30 },
+        mahogany_beam: { skill: 'carpentry', xp: 50, seconds: 60 },
+        yew_plank: { skill: 'carpentry', xp: 32, seconds: 38 },
+        yew_beam: { skill: 'carpentry', xp: 64, seconds: 76 },
+        blackwood_plank: { skill: 'carpentry', xp: 40, seconds: 46 },
+        blackwood_beam: { skill: 'carpentry', xp: 80, seconds: 92 },
+        ironbark_plank: { skill: 'carpentry', xp: 50, seconds: 52 },
+        ironbark_beam: { skill: 'carpentry', xp: 100, seconds: 104 },
+        elderwood_plank: { skill: 'carpentry', xp: 60, seconds: 60 },
+        elderwood_beam: { skill: 'carpentry', xp: 120, seconds: 120 },
+
+        copper_bar: { skill: 'smelting', xp: 2, seconds: 8 },
+        iron_bar: { skill: 'smelting', xp: 6, seconds: 15 },
+        cinder_bar: { skill: 'smelting', xp: 10, seconds: 23 },
+        darkiron_bar: { skill: 'smelting', xp: 14, seconds: 27 },
+        mithril_bar: { skill: 'smelting', xp: 22, seconds: 31 },
+        adamantite_bar: { skill: 'smelting', xp: 30, seconds: 36 },
+        starmetal_bar: { skill: 'smelting', xp: 38, seconds: 40 },
+        stormglass_bar: { skill: 'smelting', xp: 48, seconds: 44 },
+        leviathan_bar: { skill: 'smelting', xp: 58, seconds: 50 },
+        abyssal_bar: { skill: 'smelting', xp: 72, seconds: 60 },
+
+        salted_mackerel: { skill: 'cooking', xp: 7, seconds: 5 },
+        dried_sardines: { skill: 'cooking', xp: 12, seconds: 6 },
+        cod_stew: { skill: 'cooking', xp: 25, seconds: 10 },
+        grilled_salmon: { skill: 'cooking', xp: 45, seconds: 15 },
+        tuna_rations: { skill: 'cooking', xp: 65, seconds: 18 },
+        swordfish_cuts: { skill: 'cooking', xp: 90, seconds: 22 },
+        shark_haunch: { skill: 'cooking', xp: 130, seconds: 28 },
+        deepfin_steaks: { skill: 'cooking', xp: 185, seconds: 35 },
+        stormray_fillet: { skill: 'cooking', xp: 240, seconds: 45 },
+        dreadwhale_feast: { skill: 'cooking', xp: 320, seconds: 60 },
+
+        copper_nails: { skill: 'crafting', xp: 2, seconds: 4 },
+        patch_kit: { skill: 'crafting', xp: 2, seconds: 10 },
+        iron_nails: { skill: 'crafting', xp: 6, seconds: 5 },
+        caulking_kit: { skill: 'crafting', xp: 6, seconds: 14 },
+        cinder_nails: { skill: 'crafting', xp: 10, seconds: 6 },
+        hull_repair_kit: { skill: 'crafting', xp: 10, seconds: 18 },
+        darkiron_nails: { skill: 'crafting', xp: 14, seconds: 8 },
+        deck_repair_kit: { skill: 'crafting', xp: 14, seconds: 22 },
+        mithril_nails: { skill: 'crafting', xp: 20, seconds: 10 },
+        reinforcement_kit: { skill: 'crafting', xp: 22, seconds: 28 },
+        adamantite_nails: { skill: 'crafting', xp: 26, seconds: 12 },
+        shipwright_kit: { skill: 'crafting', xp: 30, seconds: 34 },
+        starmetal_nails: { skill: 'crafting', xp: 32, seconds: 15 },
+        master_repair_kit: { skill: 'crafting', xp: 38, seconds: 42 },
+        stormglass_nails: { skill: 'crafting', xp: 38, seconds: 18 },
+        hull_restoration_kit: { skill: 'crafting', xp: 48, seconds: 50 },
+        leviathan_nails: { skill: 'crafting', xp: 48, seconds: 25 },
+        refit_crate: { skill: 'crafting', xp: 58, seconds: 58 },
+        abyssal_nails: { skill: 'crafting', xp: 60, seconds: 35 },
+        master_refit_crate: { skill: 'crafting', xp: 72, seconds: 70 }
+    };
 
     // =========================================================
     // COMBAT ITEMS
@@ -4565,7 +4685,7 @@
                 lastQuantities.clear();
                 pendingItemDecreases.clear();
 
-                                
+
                 processedVictories.clear();
                 markCurrentVictoriesProcessed();
 
@@ -4941,6 +5061,9 @@
         const record = {
             key:
                 activityHistoryKey,
+
+            schemaVersion:
+                2,
 
             skill:
                 activitySkill,
@@ -6028,10 +6151,23 @@
             .trim() || '';
     }
 
+    function getCanonicalActivityTaskName(taskName) {
+        return String(taskName || '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(
+                /^(?:crafting|sawing|smelting|cooking|mining|logging|chopping|fishing|catching|gathering|harvesting)\s+/i,
+                ''
+            )
+            .trim();
+    }
+
     function getHistoricalCycleSecondsForTask(taskName) {
         const target =
             normalizeActivityKeyPart(
-                taskName
+                getCanonicalActivityTaskName(
+                    taskName
+                )
             );
 
         if (!target) {
@@ -6049,9 +6185,18 @@
                     return;
                 }
 
+                if (
+                    Number(record.schemaVersion) !== 2 ||
+                    !String(record.key || '').startsWith('taskv2:')
+                ) {
+                    return;
+                }
+
                 const sameTask =
                     normalizeActivityKeyPart(
-                        record.taskName
+                        getCanonicalActivityTaskName(
+                            record.taskName
+                        )
                     ) === target;
 
                 const seconds =
@@ -6079,6 +6224,377 @@
         return best
             ? Number(best.cycleSeconds)
             : null;
+    }
+
+    function getHistoricalRecordForTask(taskName) {
+        const target =
+            normalizeActivityKeyPart(
+                getCanonicalActivityTaskName(
+                    taskName
+                )
+            );
+
+        if (!target) {
+            return null;
+        }
+
+        let best = null;
+
+        Object.values(activityHistory)
+            .forEach(record => {
+                if (
+                    !record ||
+                    typeof record !== 'object'
+                ) {
+                    return;
+                }
+
+                /*
+                 * Ignore legacy records because older builds keyed
+                 * history by node and could mix multiple recipes.
+                 */
+                if (
+                    Number(record.schemaVersion) !== 2 ||
+                    !String(record.key || '').startsWith('taskv2:')
+                ) {
+                    return;
+                }
+
+                const sameTask =
+                    normalizeActivityKeyPart(
+                        getCanonicalActivityTaskName(
+                            record.taskName
+                        )
+                    ) === target;
+
+                if (!sameTask) {
+                    return;
+                }
+
+                if (
+                    !best ||
+                    Number(record.updated || 0) >
+                    Number(best.updated || 0)
+                ) {
+                    best = record;
+                }
+            });
+
+        return best;
+    }
+
+
+    function getBaseActivityRecipe(taskName) {
+        return BASE_ACTIVITY_RECIPES[
+            normalizeActivityKeyPart(
+                getCanonicalActivityTaskName(
+                    taskName
+                )
+            )
+        ] || null;
+    }
+
+    function getObservedTaskStats(taskName) {
+        const record =
+            getHistoricalRecordForTask(taskName);
+
+        if (!record) {
+            return null;
+        }
+
+        const actions =
+            Number(record.totalActions) || 0;
+
+        const totalXP =
+            Number(record.totalXP) || 0;
+
+        const cycleSeconds =
+            Number(record.cycleSeconds) || 0;
+
+        return {
+            skill:
+                normalizeActivityKeyPart(
+                    record.skill
+                ),
+
+            xpPerAction:
+                actions > 0 && totalXP > 0
+                    ? totalXP / actions
+                    : null,
+
+            cycleSeconds:
+                cycleSeconds > 0
+                    ? cycleSeconds
+                    : null,
+
+            source:
+                'observed'
+        };
+    }
+
+    function getCurrentProfessionModifiers() {
+        const base =
+            getBaseActivityRecipe(
+                activityTaskName
+            );
+
+        if (
+            !base ||
+            normalizeActivityKeyPart(base.skill) !==
+                normalizeActivityKeyPart(activitySkill)
+        ) {
+            return {
+                masteryXP: 0,
+                speedMultiplier: 1
+            };
+        }
+
+        let observedXP =
+            activityEstimatedXPPerAction;
+
+        if (
+            !Number.isFinite(observedXP) ||
+            observedXP <= 0
+        ) {
+            observedXP =
+                getObservedTaskStats(
+                    activityTaskName
+                )?.xpPerAction;
+        }
+
+        const masteryXP =
+            Number.isFinite(observedXP)
+                ? Math.max(
+                    0,
+                    Math.min(
+                        9,
+                        Math.round(
+                            observedXP - base.xp
+                        )
+                    )
+                )
+                : 0;
+
+        let observedCycle =
+            activityCycleSeconds;
+
+        if (
+            !Number.isFinite(observedCycle) ||
+            observedCycle <= 0
+        ) {
+            observedCycle =
+                getObservedTaskStats(
+                    activityTaskName
+                )?.cycleSeconds;
+        }
+
+        const speedMultiplier =
+            Number.isFinite(observedCycle) &&
+            observedCycle > 0 &&
+            base.seconds > 0
+                ? observedCycle /
+                    base.seconds
+                : 1;
+
+        return {
+            masteryXP,
+            speedMultiplier:
+                Math.max(
+                    0.25,
+                    Math.min(
+                        2,
+                        speedMultiplier
+                    )
+                )
+        };
+    }
+
+    function getPredictedTaskStats(taskName) {
+        const observed =
+            getObservedTaskStats(taskName);
+
+        if (
+            observed &&
+            Number.isFinite(
+                observed.cycleSeconds
+            ) &&
+            observed.cycleSeconds > 0
+        ) {
+            return observed;
+        }
+
+        const base =
+            getBaseActivityRecipe(taskName);
+
+        if (!base) {
+            return null;
+        }
+
+        const sameSkill =
+            normalizeActivityKeyPart(
+                base.skill
+            ) ===
+            normalizeActivityKeyPart(
+                activitySkill
+            );
+
+        const modifiers =
+            sameSkill
+                ? getCurrentProfessionModifiers()
+                : {
+                    masteryXP: 0,
+                    speedMultiplier: 1
+                };
+
+        return {
+            skill:
+                normalizeActivityKeyPart(
+                    base.skill
+                ),
+
+            xpPerAction:
+                base.xp +
+                modifiers.masteryXP,
+
+            cycleSeconds:
+                base.seconds *
+                modifiers.speedMultiplier,
+
+            source:
+                sameSkill
+                    ? 'base-adjusted'
+                    : 'base'
+        };
+    }
+
+    function getQueuedTimeToLevelEstimate() {
+        if (
+            activityEstimatedXPPerAction === null ||
+            activityEstimatedXPPerAction <= 0 ||
+            !Number.isFinite(activityCycleSeconds) ||
+            activityCycleSeconds <= 0
+        ) {
+            return getLiveActivityTimeToLevel();
+        }
+
+        let remainingXP =
+            getActivityRemainingXP();
+
+        if (
+            remainingXP === null ||
+            remainingXP <= 0
+        ) {
+            return 0;
+        }
+
+        let totalSeconds = 0;
+
+        const currentCycles =
+            getActivityCyclesLeft();
+
+        if (
+            Number.isFinite(currentCycles) &&
+            currentCycles > 0
+        ) {
+            const currentCountdown =
+                getActivityCycleCountdown();
+
+            for (
+                let index = 0;
+                index < currentCycles;
+                index += 1
+            ) {
+                totalSeconds +=
+                    index === 0 &&
+                    Number.isFinite(currentCountdown) &&
+                    currentCountdown >= 0
+                        ? currentCountdown
+                        : activityCycleSeconds;
+
+                remainingXP -=
+                    activityEstimatedXPPerAction;
+
+                if (remainingXP <= 0) {
+                    return totalSeconds;
+                }
+            }
+        }
+
+        const rows =
+            getQueuedActivityRows();
+
+        for (const row of rows) {
+            const cycles =
+                getQueuedCycleCount(row);
+
+            if (cycles <= 0) {
+                continue;
+            }
+
+            const taskName =
+                getQueuedTaskName(row);
+
+            const stats =
+                getPredictedTaskStats(
+                    taskName
+                );
+
+            const sameSkill =
+                stats &&
+                normalizeActivityKeyPart(
+                    stats.skill
+                ) ===
+                normalizeActivityKeyPart(
+                    activitySkill
+                );
+
+            const xpPerAction =
+                sameSkill &&
+                Number.isFinite(
+                    stats.xpPerAction
+                ) &&
+                stats.xpPerAction > 0
+                    ? stats.xpPerAction
+                    : 0;
+
+            const secondsPerCycle =
+                stats &&
+                Number.isFinite(
+                    stats.cycleSeconds
+                ) &&
+                stats.cycleSeconds > 0
+                    ? stats.cycleSeconds
+                    : activityCycleSeconds;
+
+            for (
+                let index = 0;
+                index < cycles;
+                index += 1
+            ) {
+                totalSeconds +=
+                    secondsPerCycle;
+
+                remainingXP -=
+                    xpPerAction;
+
+                if (remainingXP <= 0) {
+                    return totalSeconds;
+                }
+            }
+        }
+
+        /*
+         * The visible queue does not contain enough XP to level.
+         * Continue the estimate using the current activity rate so
+         * the display still answers how long leveling will take if
+         * the same activity continues after the queue finishes.
+         */
+        return totalSeconds +
+            Math.ceil(
+                remainingXP /
+                activityEstimatedXPPerAction
+            ) *
+            activityCycleSeconds;
     }
 
     function getCurrentTaskRemainingSeconds() {
@@ -6162,15 +6678,17 @@
             return null;
         }
 
-        let totalSeconds =
-            getCurrentTaskRemainingSeconds();
+        /*
+         * Queue Remaining represents only the activities waiting
+         * in Tidefall's queue. The active task already has its own
+         * remaining-time display in the game, so do not add it here.
+         */
+        let totalSeconds = 0;
 
         let usedFallback = false;
         let foundCycles = false;
 
-        const signatureParts = [
-            `current:${getActivityCyclesLeft() ?? 0}:${activityCycleSeconds ?? 0}`
-        ];
+        const signatureParts = [];
 
         rows.forEach(row => {
             const cycles =
@@ -6185,10 +6703,13 @@
             const taskName =
                 getQueuedTaskName(row);
 
-            let secondsPerCycle =
-                getHistoricalCycleSecondsForTask(
+            const stats =
+                getPredictedTaskStats(
                     taskName
                 );
+
+            let secondsPerCycle =
+                stats?.cycleSeconds;
 
             if (
                 !Number.isFinite(
@@ -6199,6 +6720,10 @@
                 secondsPerCycle =
                     activityCycleSeconds;
 
+                usedFallback = true;
+            } else if (
+                stats.source !== 'observed'
+            ) {
                 usedFallback = true;
             }
 
@@ -6409,16 +6934,29 @@
         if (
             settings
                 .activityLevelMode ===
-            'time'
+            'time' ||
+            settings
+                .activityLevelMode ===
+            'time_queue'
         ) {
+            const includesQueue =
+                settings.activityLevelMode ===
+                    'time_queue';
+
             activityLevelLabel.textContent =
                 activityEstimatedNextLevel !==
                     null
-                    ? `Time to Level ${activityEstimatedNextLevel}`
-                    : 'Time to Level';
+                    ? `${includesQueue ? 'Queued Time' : 'Time'} to Level ${activityEstimatedNextLevel}`
+                    : (
+                        includesQueue
+                            ? 'Queued Time to Level'
+                            : 'Time to Level'
+                    );
 
             const liveTimeToLevel =
-                getLiveActivityTimeToLevel();
+                includesQueue
+                    ? getQueuedTimeToLevelEstimate()
+                    : getLiveActivityTimeToLevel();
 
             activityLevelValue.textContent =
                 liveTimeToLevel ===
@@ -7315,15 +7853,30 @@
         const liveTimeToLevel =
             getLiveActivityTimeToLevel();
 
+        const queueTimeToLevel =
+            settings.activityLevelMode ===
+                'time_queue'
+                ? getQueuedTimeToLevelEstimate()
+                : null;
+
         const levelValue =
             settings.activityLevelMode ===
-                'time'
+                'time' ||
+            settings.activityLevelMode ===
+                'time_queue'
                 ? (
-                    liveTimeToLevel ===
-                        null
+                    (
+                        settings.activityLevelMode ===
+                            'time_queue'
+                            ? queueTimeToLevel
+                            : liveTimeToLevel
+                    ) === null
                         ? '—'
                         : formatDuration(
-                            liveTimeToLevel
+                            settings.activityLevelMode ===
+                                'time_queue'
+                                ? queueTimeToLevel
+                                : liveTimeToLevel
                         )
                 )
                 : (
@@ -7357,11 +7910,18 @@
             '#tf-header-level-label'
         ).textContent =
             settings.activityLevelMode ===
-                'time'
+                'time' ||
+            settings.activityLevelMode ===
+                'time_queue'
                 ? (
                     nextLevel !== null
-                        ? `Time to Level ${nextLevel}`
-                        : 'Time to Level'
+                        ? `${settings.activityLevelMode === 'time_queue' ? 'Queued Time' : 'Time'} to Level ${nextLevel}`
+                        : (
+                            settings.activityLevelMode ===
+                                'time_queue'
+                                ? 'Queued Time to Level'
+                                : 'Time to Level'
+                        )
                 )
                 : (
                     nextLevel !== null
@@ -8309,6 +8869,12 @@
                                             'time',
                                         label:
                                             'Time to Level'
+                                    },
+                                    {
+                                        value:
+                                            'time_queue',
+                                        label:
+                                            'Time to Level Including Queue'
                                     }
                                 ]
                             )
@@ -9108,7 +9674,10 @@
     setInterval(
         () => {
             if (
-                settings.activityLevelMode === 'time' &&
+                (
+                    settings.activityLevelMode === 'time' ||
+                    settings.activityLevelMode === 'time_queue'
+                ) &&
                 settings.activitySessionLayout === 'standard'
             ) {
                 updateActivityDisplay();
