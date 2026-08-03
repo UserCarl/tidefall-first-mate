@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.7.1
+// @version      1.8
 // @description  Combat tracker, combat warnings, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -21,8 +21,11 @@
     const PRICE_STORAGE_KEY = 'tf-pve-market-prices-v2';
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
+    const QUEUE_DEBUG_POSITION_KEY = 'tf-queue-debug-position-v1';
+    const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
+    const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.7.1';
+    const FIRST_MATE_VERSION = '1.8';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -55,6 +58,7 @@
         combatSessionLayout: 'header',
         pveTrackerHideDelaySeconds: 30,
         activityQueueRemaining: true,
+        queueDebuggerEnabled: false,
 
         skillProgressPercentEnabled: false,
 
@@ -1319,6 +1323,53 @@
             user-select: none;
         }
 
+        .tf-firstmate-collapsible-group {
+            margin: 0 0 22px;
+            border: 1px solid rgba(197, 160, 89, .24);
+            border-radius: var(--radius-sm, .364rem);
+            overflow: hidden;
+            background: rgba(0, 0, 0, .10);
+        }
+
+        .tf-firstmate-collapsible-heading {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 12px 14px;
+            cursor: pointer;
+            color: var(--gold, #c5a059);
+            background: rgba(0, 0, 0, .14);
+            border: 0;
+            font-family: var(--font-heading, "QuadraatOffcPro", Georgia, serif);
+            font-size: var(--font-size-sm, .909rem);
+            font-weight: 700;
+            letter-spacing: .06em;
+            text-align: left;
+            text-transform: uppercase;
+        }
+
+        .tf-firstmate-collapsible-heading:hover {
+            background: rgba(197, 160, 89, .06);
+        }
+
+        .tf-firstmate-collapsible-arrow {
+            width: 10px;
+            flex: 0 0 10px;
+            font-family: Arial, sans-serif;
+            font-size: 10px;
+            line-height: 1;
+        }
+
+        .tf-firstmate-collapsible-content {
+            padding: 12px;
+        }
+
+        .tf-firstmate-collapsible-group.tf-collapsed
+        .tf-firstmate-collapsible-content {
+            display: none;
+        }
+
         .tf-firstmate-settings-group {
             margin-bottom: 22px;
         }
@@ -1618,6 +1669,79 @@
             color: var(--text-secondary, #d4be8ca6);
 
             font-size: 10px;
+        }
+
+        #tf-queue-debug {
+            position: fixed;
+            left: 12px;
+            bottom: 12px;
+            z-index: 10000001;
+            width: 430px;
+            min-width: 300px;
+            min-height: 120px;
+            max-width: calc(100vw - 24px);
+            max-height: 70vh;
+            overflow: hidden;
+            resize: both;
+            color: #e8e0d0;
+            background: rgba(5, 7, 10, .96);
+            border: 1px solid rgba(197, 160, 89, .75);
+            border-radius: 6px;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, .6);
+            font: 12px/1.45 monospace;
+            pointer-events: auto;
+            user-select: text;
+        }
+
+        #tf-queue-debug-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 10px;
+            cursor: move;
+            border-bottom: 1px solid rgba(197, 160, 89, .28);
+            background: rgba(18, 20, 23, .98);
+            user-select: none;
+        }
+
+        #tf-queue-debug-title {
+            flex: 1;
+            color: var(--gold, #c5a059);
+            font-family: var(--font-heading, Georgia, serif);
+            font-weight: 700;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+        }
+
+        .tf-queue-debug-btn {
+            padding: 3px 7px;
+            cursor: pointer;
+            color: #e8e0d0;
+            background: rgba(255,255,255,.05);
+            border: 1px solid rgba(197,160,89,.35);
+            border-radius: 4px;
+            font: 11px/1.2 monospace;
+        }
+
+        .tf-queue-debug-btn:hover {
+            border-color: rgba(197,160,89,.8);
+        }
+
+        #tf-queue-debug-content {
+            height: calc(100% - 39px);
+            overflow: auto;
+            padding: 10px 12px;
+            white-space: pre-wrap;
+        }
+
+        #tf-queue-debug.tf-minimized {
+            height: auto !important;
+            min-height: 0;
+            resize: none;
+        }
+
+        #tf-queue-debug.tf-minimized #tf-queue-debug-content {
+            display: none;
         }
 
 
@@ -2313,6 +2437,195 @@
     document.body.appendChild(
         activityPanel
     );
+
+    const queueDebugPanel =
+        document.createElement('div');
+
+    queueDebugPanel.id =
+        'tf-queue-debug';
+
+    queueDebugPanel.innerHTML = `
+        <div id="tf-queue-debug-header">
+            <div id="tf-queue-debug-title">Developer Tools</div>
+            <button id="tf-queue-debug-pause" class="tf-queue-debug-btn" type="button">Pause</button>
+            <button id="tf-queue-debug-copy" class="tf-queue-debug-btn" type="button">Copy</button>
+            <button id="tf-queue-debug-minimize" class="tf-queue-debug-btn" type="button" title="Minimize">−</button>
+            <button id="tf-queue-debug-close" class="tf-queue-debug-btn" type="button" title="Close">×</button>
+        </div>
+        <div id="tf-queue-debug-content">Waiting for an active queued activity...</div>
+    `;
+
+    document.body.appendChild(
+        queueDebugPanel
+    );
+
+    const queueDebugContent =
+        queueDebugPanel.querySelector(
+            '#tf-queue-debug-content'
+        );
+
+    const queueDebugHeader =
+        queueDebugPanel.querySelector(
+            '#tf-queue-debug-header'
+        );
+
+    const queueDebugPauseButton =
+        queueDebugPanel.querySelector(
+            '#tf-queue-debug-pause'
+        );
+
+    const queueDebugCopyButton =
+        queueDebugPanel.querySelector(
+            '#tf-queue-debug-copy'
+        );
+
+    const queueDebugMinimizeButton =
+        queueDebugPanel.querySelector(
+            '#tf-queue-debug-minimize'
+        );
+
+    const queueDebugCloseButton =
+        queueDebugPanel.querySelector(
+            '#tf-queue-debug-close'
+        );
+
+    let queueDebugPaused = false;
+    let queueDebugMinimized = false;
+    let queueDebugSessionClosed = false;
+    let queueDebuggerLastEnabled =
+        Boolean(settings.queueDebuggerEnabled);
+    let queueDebugLastUpdateAt = 0;
+    let queueDebugLatestText =
+        'Waiting for an active queued activity...';
+
+    function saveQueueDebugState() {
+        try {
+            localStorage.setItem(
+                QUEUE_DEBUG_STATE_KEY,
+                JSON.stringify({
+                    minimized: queueDebugMinimized
+                })
+            );
+        } catch {
+            // Ignore developer-tool state failures.
+        }
+    }
+
+    function restoreQueueDebugState() {
+        try {
+            const saved = JSON.parse(
+                localStorage.getItem(
+                    QUEUE_DEBUG_STATE_KEY
+                ) || 'null'
+            );
+
+            queueDebugMinimized =
+                Boolean(saved?.minimized);
+
+            queueDebugPanel.classList.toggle(
+                'tf-minimized',
+                queueDebugMinimized
+            );
+
+            queueDebugMinimizeButton.textContent =
+                queueDebugMinimized
+                    ? '+'
+                    : '−';
+        } catch {
+            // Ignore malformed developer-tool state data.
+        }
+    }
+
+    function updateQueueDebugVisibility() {
+        queueDebugPanel.style.display =
+            settings.queueDebuggerEnabled &&
+            !queueDebugSessionClosed
+                ? 'block'
+                : 'none';
+    }
+
+    queueDebugPauseButton?.addEventListener(
+        'click',
+        () => {
+            queueDebugPaused =
+                !queueDebugPaused;
+
+            queueDebugPauseButton.textContent =
+                queueDebugPaused
+                    ? 'Resume'
+                    : 'Pause';
+        }
+    );
+
+    queueDebugCopyButton?.addEventListener(
+        'click',
+        async () => {
+            try {
+                await navigator.clipboard.writeText(
+                    queueDebugLatestText
+                );
+
+                queueDebugCopyButton.textContent =
+                    'Copied';
+            } catch {
+                const textarea =
+                    document.createElement('textarea');
+
+                textarea.value =
+                    queueDebugLatestText;
+
+                document.body.appendChild(
+                    textarea
+                );
+
+                textarea.select();
+                document.execCommand('copy');
+                textarea.remove();
+
+                queueDebugCopyButton.textContent =
+                    'Copied';
+            }
+
+            setTimeout(
+                () => {
+                    queueDebugCopyButton.textContent =
+                        'Copy';
+                },
+                1200
+            );
+        }
+    );
+
+    queueDebugMinimizeButton?.addEventListener(
+        'click',
+        () => {
+            queueDebugMinimized =
+                !queueDebugMinimized;
+
+            queueDebugPanel.classList.toggle(
+                'tf-minimized',
+                queueDebugMinimized
+            );
+
+            queueDebugMinimizeButton.textContent =
+                queueDebugMinimized
+                    ? '+'
+                    : '−';
+
+            saveQueueDebugState();
+        }
+    );
+
+    queueDebugCloseButton?.addEventListener(
+        'click',
+        () => {
+            queueDebugSessionClosed = true;
+            updateQueueDebugVisibility();
+        }
+    );
+
+    queueDebugPanel.style.display =
+        'none';
 
     activityPanel.style.display =
         'none';
@@ -4945,6 +5258,51 @@
             : null;
     }
 
+
+    function getTaskEndRemainingSeconds() {
+        const element =
+            document.querySelector(
+                '#task-end-timer'
+            );
+
+        if (!element) {
+            return null;
+        }
+
+        const text =
+            element.textContent
+                ?.replace(/\s+/g, ' ')
+                .trim() || '';
+
+        if (!text) {
+            return null;
+        }
+
+        const hours =
+            Number(
+                text.match(/(\d+)\s*h/i)?.[1] || 0
+            );
+
+        const minutes =
+            Number(
+                text.match(/(\d+)\s*m/i)?.[1] || 0
+            );
+
+        const seconds =
+            Number(
+                text.match(/(\d+)\s*s/i)?.[1] || 0
+            );
+
+        const total =
+            hours * 3600 +
+            minutes * 60 +
+            seconds;
+
+        return Number.isFinite(total) && total > 0
+            ? total
+            : null;
+    }
+
     // =========================================================
     // ACTIVITY HISTORY SESSION DATA
     // =========================================================
@@ -6032,6 +6390,15 @@
         false;
 
     /*
+     * Keep the last complete queue snapshot. Tidefall can unmount
+     * or partially render queue rows while the popover is closed,
+     * especially when multiple entries use the same recipe.
+     */
+    let cachedQueuedActivities = [];
+
+    let cachedQueueBadgeCount = 0;
+
+    /*
      * Remember tasks that were observed waiting in Tidefall's
      * queue. When the final queued task becomes active, Tidefall
      * removes the queue badge and rows. Keep Queue Remaining
@@ -6069,10 +6436,7 @@
     }
 
     function hydrateQueueRowsIfNeeded() {
-        if (
-            queueHydrationInProgress ||
-            queueHydratedOnce
-        ) {
+        if (queueHydrationInProgress) {
             return;
         }
 
@@ -6094,18 +6458,28 @@
             return;
         }
 
-        if (
-            getQueuedActivityRows().length > 0
-        ) {
-            queueHydratedOnce =
-                true;
+        /*
+         * Tidefall leaves stale queue-row values mounted while the
+         * popover is closed. Refresh whenever the badge count differs
+         * from the last complete snapshot, or when no complete snapshot
+         * has been captured yet.
+         */
+        const needsRefresh =
+            cachedQueuedActivities.length === 0 ||
+            queueCount !== cachedQueueBadgeCount;
 
+        if (!needsRefresh) {
             return;
         }
 
         const button =
             document.querySelector(
                 '#task-queue-btn'
+            );
+
+        const popover =
+            document.querySelector(
+                '#task-queue-popover'
             );
 
         if (!(button instanceof HTMLElement)) {
@@ -6119,25 +6493,46 @@
             button.dataset.open ===
                 'true';
 
+        const previousVisibility =
+            popover?.style.visibility || '';
+
+        const previousPointerEvents =
+            popover?.style.pointerEvents || '';
+
         /*
-         * Tidefall may not build the queue row DOM until the
-         * queue popover is opened once after a page refresh.
-         * Open it briefly so Tidefall renders the rows, then
-         * close it again if First Mate opened it.
+         * Hide First Mate's automatic refresh so the user never sees
+         * the queue popover flash open. A manually opened popover is
+         * left visible and is never closed by First Mate.
          */
+        if (!wasOpen && popover instanceof HTMLElement) {
+            popover.style.visibility =
+                'hidden';
+
+            popover.style.pointerEvents =
+                'none';
+        }
+
         if (!wasOpen) {
             button.click();
         }
 
         setTimeout(
             () => {
-                if (
-                    getQueuedActivityRows().length >
-                    0
-                ) {
-                    queueHydratedOnce =
-                        true;
-                }
+                const refreshedBadgeCount =
+                    numberFromText(
+                        document.querySelector(
+                            '#task-queue-badge'
+                        )?.textContent
+                    );
+
+                /*
+                 * Reading the snapshot while data-open is true causes
+                 * getQueuedActivitySnapshot() to trust every live row,
+                 * including separate entries with the same recipe.
+                 */
+                getQueuedActivitySnapshot(
+                    refreshedBadgeCount
+                );
 
                 if (
                     !wasOpen &&
@@ -6147,16 +6542,36 @@
                     button.click();
                 }
 
+                if (popover instanceof HTMLElement) {
+                    popover.style.visibility =
+                        previousVisibility;
+
+                    popover.style.pointerEvents =
+                        previousPointerEvents;
+                }
+
+                queueHydratedOnce =
+                    cachedQueuedActivities.length > 0;
+
                 queueHydrationInProgress =
                     false;
 
                 updateQueueRemainingDisplay();
             },
-            150
+            200
         );
     }
 
     function getQueuedCycleCount(row) {
+        if (
+            row &&
+            typeof row === 'object' &&
+            !(row instanceof HTMLElement) &&
+            Number.isFinite(Number(row.cycles))
+        ) {
+            return Number(row.cycles);
+        }
+
         const text =
             row?.querySelector(
                 '.activity-queue-row__sub'
@@ -6173,11 +6588,130 @@
     }
 
     function getQueuedTaskName(row) {
+        if (
+            row &&
+            typeof row === 'object' &&
+            !(row instanceof HTMLElement)
+        ) {
+            return String(row.taskName || '');
+        }
+
         return row?.querySelector(
             '.activity-queue-row__name'
         )?.textContent
             ?.replace(/\s+/g, ' ')
             .trim() || '';
+    }
+
+    function getQueuedActivitySnapshot(
+        queueCount
+    ) {
+        const liveRows =
+            getQueuedActivityRows();
+
+        const button =
+            document.querySelector(
+                '#task-queue-btn'
+            );
+
+        const popoverOpen =
+            button?.dataset.open === 'true';
+
+        const liveEntries =
+            liveRows
+                .map((row, index) => ({
+                    taskName:
+                        getQueuedTaskName(row),
+                    cycles:
+                        getQueuedCycleCount(row),
+                    queueId:
+                        row.dataset.queueId ||
+                        String(index)
+                }))
+                .filter(entry =>
+                    entry.taskName &&
+                    entry.cycles > 0
+                );
+
+        /*
+         * Trust a snapshot only while the popover is open or when
+         * Tidefall has rendered at least as many rows as its badge
+         * says exist. This prevents a partial closed-popover render
+         * from replacing a complete cached queue.
+         */
+        const snapshotComplete =
+            liveEntries.length > 0 &&
+            (
+                popoverOpen ||
+                (
+                    queueCount > 0 &&
+                    liveEntries.length >= queueCount
+                )
+            );
+
+        if (snapshotComplete) {
+            const grouped =
+                new Map();
+
+            liveEntries.forEach(entry => {
+                const canonical =
+                    normalizeActivityKeyPart(
+                        getCanonicalActivityTaskName(
+                            entry.taskName
+                        )
+                    );
+
+                if (!canonical) {
+                    return;
+                }
+
+                const existing =
+                    grouped.get(canonical);
+
+                if (existing) {
+                    existing.cycles +=
+                        entry.cycles;
+
+                    existing.queueIds.push(
+                        entry.queueId
+                    );
+                } else {
+                    grouped.set(
+                        canonical,
+                        {
+                            taskName:
+                                entry.taskName,
+                            cycles:
+                                entry.cycles,
+                            canonical,
+                            queueIds: [
+                                entry.queueId
+                            ]
+                        }
+                    );
+                }
+            });
+
+            cachedQueuedActivities =
+                Array.from(
+                    grouped.values()
+                );
+
+            cachedQueueBadgeCount =
+                queueCount;
+        } else if (queueCount <= 0) {
+            cachedQueuedActivities = [];
+            cachedQueueBadgeCount = 0;
+        }
+
+        if (
+            queueCount > 0 &&
+            cachedQueuedActivities.length > 0
+        ) {
+            return cachedQueuedActivities;
+        }
+
+        return liveEntries;
     }
 
     function getCanonicalActivityTaskName(taskName) {
@@ -6404,8 +6938,51 @@
                 )
                 : 0;
 
-        let observedCycle =
-            activityCycleSeconds;
+        /*
+         * Prefer Tidefall's exact active-task end timer when
+         * deriving the current city's profession speed. The
+         * visible cycle countdown is rounded to whole seconds,
+         * while city haste can produce fractional cycle lengths.
+         */
+        const exactRemaining =
+            getTaskEndRemainingSeconds();
+
+        const cyclesLeft =
+            getActivityCyclesLeft();
+
+        const currentCountdown =
+            getActivityCycleCountdown();
+
+        let observedCycle = null;
+
+        if (
+            Number.isFinite(exactRemaining) &&
+            exactRemaining > 0 &&
+            Number.isFinite(cyclesLeft) &&
+            cyclesLeft > 0
+        ) {
+            if (
+                cyclesLeft > 1 &&
+                Number.isFinite(currentCountdown) &&
+                currentCountdown >= 0 &&
+                exactRemaining > currentCountdown
+            ) {
+                observedCycle =
+                    (exactRemaining - currentCountdown) /
+                    (cyclesLeft - 1);
+            } else {
+                observedCycle =
+                    exactRemaining / cyclesLeft;
+            }
+        }
+
+        if (
+            !Number.isFinite(observedCycle) ||
+            observedCycle <= 0
+        ) {
+            observedCycle =
+                activityCycleSeconds;
+        }
 
         if (
             !Number.isFinite(observedCycle) ||
@@ -6439,6 +7016,49 @@
     }
 
     function getPredictedTaskStats(taskName) {
+        const base =
+            getBaseActivityRecipe(taskName);
+
+        if (base) {
+            const sameSkill =
+                normalizeActivityKeyPart(
+                    base.skill
+                ) ===
+                normalizeActivityKeyPart(
+                    activitySkill
+                );
+
+            /*
+             * For queued recipes in the same profession, always
+             * apply the speed multiplier learned from the current
+             * active task. Historical recipe timing may have been
+             * recorded in another city and must not override the
+             * current city's haste.
+             */
+            if (sameSkill) {
+                const modifiers =
+                    getCurrentProfessionModifiers();
+
+                return {
+                    skill:
+                        normalizeActivityKeyPart(
+                            base.skill
+                        ),
+
+                    xpPerAction:
+                        base.xp +
+                        modifiers.masteryXP,
+
+                    cycleSeconds:
+                        base.seconds *
+                        modifiers.speedMultiplier,
+
+                    source:
+                        'current-city-adjusted'
+                };
+            }
+        }
+
         const observed =
             getObservedTaskStats(taskName);
 
@@ -6452,28 +7072,9 @@
             return observed;
         }
 
-        const base =
-            getBaseActivityRecipe(taskName);
-
         if (!base) {
             return null;
         }
-
-        const sameSkill =
-            normalizeActivityKeyPart(
-                base.skill
-            ) ===
-            normalizeActivityKeyPart(
-                activitySkill
-            );
-
-        const modifiers =
-            sameSkill
-                ? getCurrentProfessionModifiers()
-                : {
-                    masteryXP: 0,
-                    speedMultiplier: 1
-                };
 
         return {
             skill:
@@ -6482,17 +7083,13 @@
                 ),
 
             xpPerAction:
-                base.xp +
-                modifiers.masteryXP,
+                base.xp,
 
             cycleSeconds:
-                base.seconds *
-                modifiers.speedMultiplier,
+                base.seconds,
 
             source:
-                sameSkill
-                    ? 'base-adjusted'
-                    : 'base'
+                'base'
         };
     }
 
@@ -6667,6 +7264,48 @@
         );
     }
 
+    function setQueueDebug(
+        lines,
+        force = false
+    ) {
+        if (!queueDebugContent) {
+            return;
+        }
+
+        const nextText =
+            Array.isArray(lines)
+                ? lines.join('\n')
+                : String(lines || '');
+
+        queueDebugLatestText =
+            nextText;
+
+        if (queueDebugPaused) {
+            return;
+        }
+
+        const now =
+            Date.now();
+
+        if (
+            !force &&
+            now - queueDebugLastUpdateAt < 1000
+        ) {
+            return;
+        }
+
+        queueDebugLastUpdateAt =
+            now;
+
+        if (
+            queueDebugContent.textContent !==
+            nextText
+        ) {
+            queueDebugContent.textContent =
+                nextText;
+        }
+    }
+
     function getQueueRemainingEstimate() {
         hydrateQueueRowsIfNeeded();
 
@@ -6681,7 +7320,9 @@
             );
 
         const rows =
-            getQueuedActivityRows();
+            getQueuedActivitySnapshot(
+                queueCount
+            );
 
         const hasWaitingQueue =
             Boolean(
@@ -6700,15 +7341,66 @@
                 QUEUE_TRANSITION_GRACE_MS;
 
             /*
-             * Queue Remaining represents only activities still
-             * waiting behind the active task.
+             * Queue Remaining represents the full amount of work
+             * still outstanding: the active task plus every task
+             * waiting behind it.
+             *
+             * Tidefall exposes an exact active-task end timer, so
+             * use that value directly. This preserves fractional
+             * city speed bonuses that are lost in the rounded
+             * "Next item in Ns" countdown.
              */
-            let totalSeconds = 0;
+            const activeExactSeconds =
+                getTaskEndRemainingSeconds();
 
-            let usedFallback = false;
+            let totalSeconds =
+                Number.isFinite(activeExactSeconds) &&
+                activeExactSeconds > 0
+                    ? activeExactSeconds
+                    : getCurrentTaskRemainingSeconds();
+
+            let usedFallback =
+                !Number.isFinite(activeExactSeconds) ||
+                activeExactSeconds <= 0;
+
+            const currentCycles =
+                getActivityCyclesLeft();
+
+            const currentCountdown =
+                getActivityCycleCountdown();
+
+            const currentBase =
+                getBaseActivityRecipe(
+                    activityTaskName
+                );
+
+            const currentModifiers =
+                getCurrentProfessionModifiers();
+
+            const debugLines = [
+                `Active: ${activityTaskName || 'Unknown'}`,
+                `Cycles left: ${currentCycles ?? '—'}`,
+                `Current countdown: ${currentCountdown ?? '—'}s`,
+                `Game end timer: ${activeExactSeconds ?? '—'}s (${Number.isFinite(activeExactSeconds) ? formatDuration(activeExactSeconds) : '—'})`,
+                `Base cycle: ${currentBase?.seconds ?? '—'}s`,
+                `Derived speed multiplier: ${Number(currentModifiers.speedMultiplier || 1).toFixed(6)}`,
+                `Derived active cycle: ${currentBase ? (currentBase.seconds * currentModifiers.speedMultiplier).toFixed(6) : '—'}s`,
+                '',
+                'Queued:'
+            ];
+
             let foundCycles = false;
 
-            const signatureParts = [];
+            const currentCanonical =
+                normalizeActivityKeyPart(
+                    getCanonicalActivityTaskName(
+                        activityTaskName
+                    )
+                );
+
+            const signatureParts = [
+                `active:${currentCanonical}:${getActivityCyclesLeft() ?? 0}`
+            ];
 
             rows.forEach(row => {
                 const cycles =
@@ -6766,25 +7458,56 @@
                     ) &&
                     secondsPerCycle > 0
                 ) {
+                    const queuedBase =
+                        getBaseActivityRecipe(
+                            taskName
+                        );
+
+                    const queuedTotal =
+                        cycles * secondsPerCycle;
+
+                    debugLines.push(
+                        `${taskName} × ${cycles}`,
+                        `  base: ${queuedBase?.seconds ?? '—'}s`,
+                        `  source: ${stats?.source || 'fallback'}`,
+                        `  effective: ${secondsPerCycle.toFixed(6)}s`,
+                        `  total: ${queuedTotal.toFixed(3)}s (${formatDuration(queuedTotal)})`
+                    );
+
                     totalSeconds +=
-                        cycles *
-                        secondsPerCycle;
+                        queuedTotal;
 
                     const queueId =
-                        row.dataset.queueId || '';
+                        row?.queueIds?.join(',') ||
+                        row?.queueId ||
+                        row?.dataset?.queueId ||
+                        '';
 
                     signatureParts.push(
-                        `${queueId}:${normalizeActivityKeyPart(taskName)}:${cycles}:${secondsPerCycle}`
+                        `${normalizeActivityKeyPart(taskName)}:${cycles}:${queueId}`
                     );
                 }
             });
 
             if (
-                !foundCycles ||
-                totalSeconds <= 0
+                totalSeconds <= 0 ||
+                (
+                    !foundCycles &&
+                    !Number.isFinite(activeExactSeconds)
+                )
             ) {
                 return null;
             }
+
+            debugLines.push(
+                '',
+                `Final total: ${totalSeconds.toFixed(3)}s (${formatDuration(totalSeconds)})`,
+                `Fallback used: ${usedFallback ? 'yes' : 'no'}`
+            );
+
+            setQueueDebug(
+                debugLines
+            );
 
             queueTransitionHoldSeconds =
                 totalSeconds;
@@ -6811,6 +7534,10 @@
             getCurrentActivity();
 
         if (!currentActivity) {
+            setQueueDebug(
+                'No active activity detected. Waiting for queue transition or new task.'
+            );
+
             if (
                 Date.now() <=
                     queueTransitionGraceUntil &&
@@ -8593,6 +9320,96 @@
         return group;
     }
 
+    function createCollapsibleSettingsGroup(
+        title,
+        storageKey,
+        defaultOpen = false
+    ) {
+        const group =
+            document.createElement('div');
+
+        group.className =
+            'tf-firstmate-collapsible-group';
+
+        let isOpen =
+            defaultOpen;
+
+        try {
+            const saved =
+                localStorage.getItem(storageKey);
+
+            if (saved !== null) {
+                isOpen = saved === 'true';
+            }
+        } catch {
+            // Ignore developer-section storage failures.
+        }
+
+        const heading =
+            document.createElement('button');
+
+        heading.type = 'button';
+        heading.className =
+            'tf-firstmate-collapsible-heading';
+
+        const arrow =
+            document.createElement('span');
+
+        arrow.className =
+            'tf-firstmate-collapsible-arrow';
+
+        const label =
+            document.createElement('span');
+
+        label.textContent = title;
+
+        const content =
+            document.createElement('div');
+
+        content.className =
+            'tf-firstmate-collapsible-content';
+
+        function applyState() {
+            group.classList.toggle(
+                'tf-collapsed',
+                !isOpen
+            );
+
+            arrow.textContent =
+                isOpen ? '▼' : '▶';
+
+            heading.setAttribute(
+                'aria-expanded',
+                String(isOpen)
+            );
+        }
+
+        heading.append(arrow, label);
+        heading.addEventListener(
+            'click',
+            () => {
+                isOpen = !isOpen;
+                applyState();
+
+                try {
+                    localStorage.setItem(
+                        storageKey,
+                        String(isOpen)
+                    );
+                } catch {
+                    // Ignore developer-section storage failures.
+                }
+            }
+        );
+
+        group.append(heading, content);
+        group.settingsContent = content;
+
+        applyState();
+
+        return group;
+    }
+
     function createVersionCard() {
         const card =
             document.createElement(
@@ -9212,6 +10029,26 @@
             })
         );
 
+        const developerGroup =
+            createCollapsibleSettingsGroup(
+                'Developer Tools',
+                DEVELOPER_TOOLS_SECTION_KEY,
+                false
+            );
+
+        developerGroup.settingsContent.appendChild(
+            createSettingsCard({
+                title:
+                    'Queue Debugger',
+
+                description:
+                    'Show live queue timing data used by First Mate. Includes pause, copy, minimize, drag, and resize controls.',
+
+                toggleKey:
+                    'queueDebuggerEnabled'
+            })
+        );
+
         const displayGroup =
             createSettingsGroup(
                 'Display & Camera'
@@ -9241,6 +10078,7 @@
         section.append(
             combatGroup,
             activityGroup,
+            developerGroup,
             displayGroup
         );
 
@@ -9563,6 +10401,20 @@
             );
         }
 
+        const queueDebuggerEnabledNow =
+            Boolean(settings.queueDebuggerEnabled);
+
+        if (
+            queueDebuggerEnabledNow !==
+            queueDebuggerLastEnabled
+        ) {
+            queueDebugSessionClosed = false;
+            queueDebuggerLastEnabled =
+                queueDebuggerEnabledNow;
+        }
+
+        updateQueueDebugVisibility();
+
         if (
             settings.skillProgressPercentEnabled
         ) {
@@ -9682,6 +10534,64 @@
         }
     }
 
+    function saveQueueDebugPosition() {
+        const rect =
+            queueDebugPanel.getBoundingClientRect();
+
+        try {
+            localStorage.setItem(
+                QUEUE_DEBUG_POSITION_KEY,
+                JSON.stringify({
+                    left: Math.round(rect.left),
+                    top: Math.round(rect.top),
+                    width: Math.round(rect.width),
+                    height: Math.round(rect.height)
+                })
+            );
+        } catch {
+            // Ignore developer-tool position failures.
+        }
+    }
+
+    function restoreQueueDebugPosition() {
+        try {
+            const saved =
+                JSON.parse(
+                    localStorage.getItem(
+                        QUEUE_DEBUG_POSITION_KEY
+                    ) || 'null'
+                );
+
+            if (!saved) {
+                return;
+            }
+
+            if (Number.isFinite(saved.left)) {
+                queueDebugPanel.style.left =
+                    `${Math.max(0, saved.left)}px`;
+                queueDebugPanel.style.bottom =
+                    'auto';
+            }
+
+            if (Number.isFinite(saved.top)) {
+                queueDebugPanel.style.top =
+                    `${Math.max(0, saved.top)}px`;
+            }
+
+            if (Number.isFinite(saved.width)) {
+                queueDebugPanel.style.width =
+                    `${Math.max(300, saved.width)}px`;
+            }
+
+            if (Number.isFinite(saved.height)) {
+                queueDebugPanel.style.height =
+                    `${Math.max(120, saved.height)}px`;
+            }
+        } catch {
+            // Ignore malformed developer-tool position data.
+        }
+    }
+
     // =========================================================
     // DRAGGING
     // =========================================================
@@ -9785,6 +10695,13 @@
                 ) {
                     saveActivityPanelPosition();
                 }
+
+                if (
+                    panel ===
+                    queueDebugPanel
+                ) {
+                    saveQueueDebugPosition();
+                }
             }
         );
     }
@@ -9804,6 +10721,17 @@
     makePanelDraggable(
         costWindow,
         costWindowHeader
+    );
+
+    makePanelDraggable(
+        queueDebugPanel,
+        queueDebugHeader
+    );
+
+    new ResizeObserver(
+        saveQueueDebugPosition
+    ).observe(
+        queueDebugPanel
     );
 
     // =========================================================
@@ -9968,6 +10896,8 @@
         0;
 
     restoreActivityPanelPosition();
+    restoreQueueDebugPosition();
+    restoreQueueDebugState();
 
     document
         .getElementById(
