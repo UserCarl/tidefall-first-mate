@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.7
+// @version      1.7.1
 // @description  Combat tracker, combat warnings, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -22,7 +22,7 @@
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
 
-    const FIRST_MATE_VERSION = '1.7';
+    const FIRST_MATE_VERSION = '1.7.1';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -6031,6 +6031,35 @@
     let queueCountdownApproximate =
         false;
 
+    /*
+     * Remember tasks that were observed waiting in Tidefall's
+     * queue. When the final queued task becomes active, Tidefall
+     * removes the queue badge and rows. Keep Queue Remaining
+     * visible for that promoted task until it finishes.
+     */
+    const queuedPendingTaskNames =
+        new Set();
+
+    let queuePromotedTaskName =
+        '';
+
+    /*
+     * Tidefall briefly removes the active-task panel while
+     * promoting the next queued task. Preserve queue state across
+     * that gap instead of treating it as the queue ending.
+     */
+    let queueTransitionGraceUntil =
+        0;
+
+    let queueTransitionHoldSeconds =
+        0;
+
+    let queueTransitionHoldStartedAt =
+        0;
+
+    const QUEUE_TRANSITION_GRACE_MS =
+        15000;
+
     function getQueuedActivityRows() {
         return Array.from(
             document.querySelectorAll(
@@ -6651,117 +6680,280 @@
                 badge?.textContent
             );
 
-        if (
-            !badge ||
-            badge.hidden ||
-            queueCount <= 0
-        ) {
-            queueHydratedOnce =
-                false;
-
-            queueCountdownSignature =
-                '';
-
-            queueCountdownBaseSeconds =
-                0;
-
-            queueCountdownStartedAt =
-                0;
-
-            return null;
-        }
-
         const rows =
             getQueuedActivityRows();
 
-        if (rows.length === 0) {
+        const hasWaitingQueue =
+            Boolean(
+                badge &&
+                !badge.hidden &&
+                queueCount > 0 &&
+                rows.length > 0
+            );
+
+        if (hasWaitingQueue) {
+            queuePromotedTaskName =
+                '';
+
+            queueTransitionGraceUntil =
+                Date.now() +
+                QUEUE_TRANSITION_GRACE_MS;
+
+            /*
+             * Queue Remaining represents only activities still
+             * waiting behind the active task.
+             */
+            let totalSeconds = 0;
+
+            let usedFallback = false;
+            let foundCycles = false;
+
+            const signatureParts = [];
+
+            rows.forEach(row => {
+                const cycles =
+                    getQueuedCycleCount(row);
+
+                if (cycles <= 0) {
+                    return;
+                }
+
+                foundCycles = true;
+
+                const taskName =
+                    getQueuedTaskName(row);
+
+                const canonicalTaskName =
+                    getCanonicalActivityTaskName(
+                        taskName
+                    );
+
+                if (canonicalTaskName) {
+                    queuedPendingTaskNames.add(
+                        normalizeActivityKeyPart(
+                            canonicalTaskName
+                        )
+                    );
+                }
+
+                const stats =
+                    getPredictedTaskStats(
+                        taskName
+                    );
+
+                let secondsPerCycle =
+                    stats?.cycleSeconds;
+
+                if (
+                    !Number.isFinite(
+                        secondsPerCycle
+                    ) ||
+                    secondsPerCycle <= 0
+                ) {
+                    secondsPerCycle =
+                        activityCycleSeconds;
+
+                    usedFallback = true;
+                } else if (
+                    stats.source !== 'observed'
+                ) {
+                    usedFallback = true;
+                }
+
+                if (
+                    Number.isFinite(
+                        secondsPerCycle
+                    ) &&
+                    secondsPerCycle > 0
+                ) {
+                    totalSeconds +=
+                        cycles *
+                        secondsPerCycle;
+
+                    const queueId =
+                        row.dataset.queueId || '';
+
+                    signatureParts.push(
+                        `${queueId}:${normalizeActivityKeyPart(taskName)}:${cycles}:${secondsPerCycle}`
+                    );
+                }
+            });
+
+            if (
+                !foundCycles ||
+                totalSeconds <= 0
+            ) {
+                return null;
+            }
+
+            queueTransitionHoldSeconds =
+                totalSeconds;
+
+            queueTransitionHoldStartedAt =
+                Date.now();
+
+            return {
+                seconds:
+                    totalSeconds,
+
+                approximate:
+                    usedFallback,
+
+                signature:
+                    signatureParts.join('|')
+            };
+        }
+
+        queueHydratedOnce =
+            false;
+
+        const currentActivity =
+            getCurrentActivity();
+
+        if (!currentActivity) {
+            if (
+                Date.now() <=
+                    queueTransitionGraceUntil &&
+                queueTransitionHoldSeconds > 0
+            ) {
+                const heldElapsed =
+                    Math.max(
+                        0,
+                        (
+                            Date.now() -
+                            queueTransitionHoldStartedAt
+                        ) / 1000
+                    );
+
+                return {
+                    seconds:
+                        Math.max(
+                            1,
+                            queueTransitionHoldSeconds -
+                                heldElapsed
+                        ),
+
+                    approximate:
+                        queueCountdownApproximate,
+
+                    signature:
+                        'queue-transition-hold'
+                };
+            }
+
+            queuePromotedTaskName =
+                '';
+
+            queuedPendingTaskNames.clear();
+
+            queueTransitionGraceUntil =
+                0;
+
+            queueTransitionHoldSeconds =
+                0;
+
             return null;
         }
 
-        /*
-         * Queue Remaining represents only the activities waiting
-         * in Tidefall's queue. The active task already has its own
-         * remaining-time display in the game, so do not add it here.
-         */
-        let totalSeconds = 0;
-
-        let usedFallback = false;
-        let foundCycles = false;
-
-        const signatureParts = [];
-
-        rows.forEach(row => {
-            const cycles =
-                getQueuedCycleCount(row);
-
-            if (cycles <= 0) {
-                return;
-            }
-
-            foundCycles = true;
-
-            const taskName =
-                getQueuedTaskName(row);
-
-            const stats =
-                getPredictedTaskStats(
-                    taskName
-                );
-
-            let secondsPerCycle =
-                stats?.cycleSeconds;
-
-            if (
-                !Number.isFinite(
-                    secondsPerCycle
-                ) ||
-                secondsPerCycle <= 0
-            ) {
-                secondsPerCycle =
-                    activityCycleSeconds;
-
-                usedFallback = true;
-            } else if (
-                stats.source !== 'observed'
-            ) {
-                usedFallback = true;
-            }
-
-            if (
-                Number.isFinite(
-                    secondsPerCycle
-                ) &&
-                secondsPerCycle > 0
-            ) {
-                totalSeconds +=
-                    cycles *
-                    secondsPerCycle;
-
-                const queueId =
-                    row.dataset.queueId || '';
-
-                signatureParts.push(
-                    `${queueId}:${normalizeActivityKeyPart(taskName)}:${cycles}:${secondsPerCycle}`
-                );
-            }
-        });
+        const currentCanonical =
+            normalizeActivityKeyPart(
+                getCanonicalActivityTaskName(
+                    currentActivity.taskName
+                )
+            );
 
         if (
-            !foundCycles ||
-            totalSeconds <= 0
+            !queuePromotedTaskName &&
+            currentCanonical &&
+            queuedPendingTaskNames.has(
+                currentCanonical
+            )
         ) {
+            queuePromotedTaskName =
+                currentCanonical;
+
+            queuedPendingTaskNames.delete(
+                currentCanonical
+            );
+        }
+
+        if (
+            !queuePromotedTaskName ||
+            currentCanonical !==
+                queuePromotedTaskName
+        ) {
+            if (
+                Date.now() <=
+                    queueTransitionGraceUntil &&
+                queueTransitionHoldSeconds > 0
+            ) {
+                const heldElapsed =
+                    Math.max(
+                        0,
+                        (
+                            Date.now() -
+                            queueTransitionHoldStartedAt
+                        ) / 1000
+                    );
+
+                return {
+                    seconds:
+                        Math.max(
+                            1,
+                            queueTransitionHoldSeconds -
+                                heldElapsed
+                        ),
+
+                    approximate:
+                        queueCountdownApproximate,
+
+                    signature:
+                        'queue-transition-hold'
+                };
+            }
+
+            queuePromotedTaskName =
+                '';
+
+            queuedPendingTaskNames.clear();
+
+            queueTransitionGraceUntil =
+                0;
+
+            queueTransitionHoldSeconds =
+                0;
+
+            return null;
+        }
+
+        queueTransitionGraceUntil =
+            0;
+
+        queueTransitionHoldSeconds =
+            0;
+
+        const activeSeconds =
+            getCurrentTaskRemainingSeconds();
+
+        if (
+            !Number.isFinite(activeSeconds) ||
+            activeSeconds <= 0
+        ) {
+            queuePromotedTaskName =
+                '';
+
             return null;
         }
 
         return {
             seconds:
-                totalSeconds,
+                activeSeconds,
 
             approximate:
-                usedFallback,
+                false,
 
             signature:
-                signatureParts.join('|')
+                `promoted:${currentCanonical}:${getActivityCyclesLeft() ?? 0}:${activityCycleSeconds ?? 0}`
         };
     }
 
@@ -7013,10 +7205,25 @@
             activityPanel.style.display =
                 'none';
 
-            activityHeaderLayout
-                ?.classList.remove(
-                    'tf-active'
-                );
+            /*
+             * Tidefall briefly removes the active-task DOM while
+             * promoting a queued task. Keep the header mounted
+             * during that gap so Queue Remaining does not blink
+             * off before the promoted task appears.
+             */
+            const preservingQueueTransition =
+                settings.activityQueueRemaining &&
+                Date.now() <= queueTransitionGraceUntil &&
+                queueTransitionHoldSeconds > 0;
+
+            if (!preservingQueueTransition) {
+                activityHeaderLayout
+                    ?.classList.remove(
+                        'tf-active'
+                    );
+            } else {
+                updateActivityHeaderLayout();
+            }
 
             return;
         }
@@ -7814,12 +8021,39 @@
                     activityTaskName
             );
 
+        /*
+         * Read queue state before deciding header visibility.
+         * A promoted queued task starts a fresh activity session
+         * with zero completed actions, but the header must remain
+         * visible through that handoff.
+         */
+        const queueEstimate =
+            getQueueRemainingEstimate();
+
+        const preservingQueueTransition =
+            Boolean(
+                queueEstimate &&
+                (
+                    queuePromotedTaskName ||
+                    (
+                        Date.now() <= queueTransitionGraceUntil &&
+                        queueTransitionHoldSeconds > 0
+                    )
+                )
+            );
+
         const visible =
             settings.activityTrackerEnabled &&
             activityStarted &&
-            activityActions > 0 &&
+            (
+                activityActions > 0 ||
+                preservingQueueTransition
+            ) &&
             !activityPanelClosed &&
-            activityStillActive &&
+            (
+                activityStillActive ||
+                preservingQueueTransition
+            ) &&
             !combatHasHeaderPriority;
 
         activityHeaderLayout.classList.toggle(
@@ -7886,9 +8120,6 @@
                         : activityEstimatedActionsToLevel
                             .toLocaleString()
                 );
-
-        const queueEstimate =
-            getQueueRemainingEstimate();
 
         const queueText =
             queueEstimate
