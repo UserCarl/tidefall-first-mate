@@ -18,7 +18,8 @@
     // =========================================================
 
     const SETTINGS_STORAGE_KEY = 'tf-firstmate-settings-v2';
-    const PRICE_STORAGE_KEY = 'tf-pve-market-prices-v2';
+    const PRICE_STORAGE_KEY = 'tf-pve-market-prices-v3';
+    const QUARTERMASTER_STORAGE_KEY = 'tf-quartermaster-v1';
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
     const QUEUE_DEBUG_POSITION_KEY = 'tf-queue-debug-position-v1';
@@ -26,6 +27,7 @@
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
     const FIRST_MATE_VERSION = '1.8';
+    const FIRST_MATE_BUILD_ID = '2026-08-05-official';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -257,13 +259,12 @@
     const ACTIVITY_RIGHT = 158;
     const ACTIVITY_TOP = 60;
 
-    const COMBAT_SCAN_INTERVAL = 250;
+    const COMBAT_SCAN_INTERVAL = 1000;
     const ITEM_SCAN_INTERVAL = 250;
     const ITEM_DECREASE_CONFIRM_MS = 750;
-    const PORT_ITEM_DECREASE_CONFIRM_MS = 3000;
-    const MARKET_SCAN_INTERVAL = 750;
+    const MARKET_SCAN_INTERVAL = 1500;
     const DISPLAY_INTERVAL = 1000;
-    const WARNING_SCAN_INTERVAL = 250;
+    const WARNING_SCAN_INTERVAL = 500;
     const ACTIVITY_SCAN_INTERVAL = 250;
 
     const COMBAT_GRACE_PERIOD = 30000;
@@ -438,6 +439,64 @@
     const TRACKED_IDS = new Set(
         Object.keys(ITEM_NAMES).map(Number)
     );
+
+
+    /*
+     * Built-in vendor values provide a conservative fallback when no
+     * current Exchange listing or recent trade has been captured. Current
+     * Exchange listings always take priority for replacement-cost estimates.
+     */
+    const BUILT_IN_VENDOR_PRICES = {
+        201: 3,
+        202: 6,
+        203: 9,
+        204: 11,
+        205: 12,
+        206: 21,
+        207: 25,
+        208: 34,
+        209: 55,
+        210: 105,
+
+        221: 10,
+        222: 18,
+        223: 22,
+        224: 30,
+        225: 14,
+        226: 42,
+        227: 48,
+        228: 60,
+        229: 68,
+        230: 90,
+
+        231: 13,
+        232: 54,
+        233: 92,
+        234: 190,
+        235: 245,
+        236: 530,
+        237: 745,
+        238: 1350,
+        239: 1200,
+        240: 3350
+    };
+
+    function normalizeItemName(value) {
+        return String(value || '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+    }
+
+    const ITEM_ID_BY_NAME = new Map(
+        Object.entries(ITEM_NAMES).map(
+            ([itemId, itemName]) => [
+                normalizeItemName(itemName),
+                Number(itemId)
+            ]
+        )
+    );
+
 
     // =========================================================
     // GENERAL HELPERS
@@ -1655,8 +1714,7 @@
             font-weight: 700;
         }
 
-        .tf-activity-header-stat[data-kind="queue"] .tf-activity-header-value,
-        .tf-activity-header-stat[data-kind="elapsed"] .tf-activity-header-value {
+        .tf-activity-header-stat[data-kind="queue"] .tf-activity-header-value {
             color: var(--text-primary, #e8e0d0);
         }
 
@@ -1826,11 +1884,6 @@
             }
         }
 
-        @media (max-width: 1450px) {
-            .tf-activity-header-stat[data-kind="elapsed"] {
-                display: none;
-            }
-        }
 
         @media (max-width: 1300px) {
             .tf-activity-header-title {
@@ -2403,18 +2456,6 @@
                 </span>
             </div>
 
-            <div class="tf-stat-row">
-                <span class="tf-stat-label">
-                    Elapsed
-                </span>
-
-                <span
-                    id="tf-activity-elapsed"
-                    class="tf-stat-value"
-                >
-                    0m 00s
-                </span>
-            </div>
 
             <div class="tf-reset-row">
 
@@ -2675,10 +2716,6 @@
             '#tf-activity-queue-remaining'
         );
 
-    const activityElapsedElement =
-        activityPanel.querySelector(
-            '#tf-activity-elapsed'
-        );
 
     const activitySkillElement =
         activityPanel.querySelector(
@@ -2762,6 +2799,9 @@
     // =========================================================
 
     let priceCache = {};
+    let priceCacheSaveTimer = null;
+    let lastQuartermasterSyncAt = 0;
+    let lastQuartermasterUpdatedAt = 0;
 
     try {
         priceCache =
@@ -2783,72 +2823,331 @@
                 )
             );
         } catch {
-            // Ignore.
+            // Ignore storage failures.
         }
     }
 
-    function setCachedPrice(
+    function schedulePriceCacheSave() {
+        if (priceCacheSaveTimer !== null) {
+            return;
+        }
+
+        priceCacheSaveTimer =
+            window.setTimeout(
+                () => {
+                    priceCacheSaveTimer = null;
+                    savePriceCache();
+                },
+                150
+            );
+    }
+
+    function getCachedPriceRecord(itemId) {
+        const record =
+            priceCache[itemId];
+
+        if (
+            !record ||
+            typeof record !== 'object' ||
+            Array.isArray(record)
+        ) {
+            return {};
+        }
+
+        return record;
+    }
+
+    function setCachedMarketData(
         itemId,
-        price,
-        source
+        patch
     ) {
         if (
             !Number.isFinite(itemId) ||
             itemId <= 0 ||
-            !Number.isFinite(price) ||
-            price <= 0
+            !patch ||
+            typeof patch !== 'object'
         ) {
-            return;
+            return false;
         }
 
         const existing =
-            priceCache[itemId];
+            getCachedPriceRecord(itemId);
 
-        if (
-            existing &&
-            typeof existing ===
-                'object' &&
-            Number(existing.price) ===
-                price &&
-            existing.source ===
-                source
-        ) {
-            return;
-        }
-
-        priceCache[itemId] = {
-            price,
-            source,
-            updated: Date.now()
+        const next = {
+            ...existing,
+            itemId,
+            name:
+                ITEM_NAMES[itemId] ||
+                existing.name ||
+                ''
         };
 
-        savePriceCache();
+        const numericFields = [
+            'ask',
+            'bid',
+            'lastSold',
+            'vendorPrice'
+        ];
+
+        numericFields.forEach(
+            field => {
+                if (
+                    Object.prototype.hasOwnProperty.call(
+                        patch,
+                        field
+                    )
+                ) {
+                    const value =
+                        Number(patch[field]);
+
+                    next[field] =
+                        Number.isFinite(value) &&
+                        value > 0
+                            ? value
+                            : 0;
+                }
+            }
+        );
+
+        [
+            'askSource',
+            'bidSource',
+            'lastSoldSource',
+            'vendorSource'
+        ].forEach(
+            field => {
+                if (
+                    Object.prototype.hasOwnProperty.call(
+                        patch,
+                        field
+                    )
+                ) {
+                    next[field] =
+                        String(patch[field] || '');
+                }
+            }
+        );
+
+        next.updated =
+            Date.now();
+
+        const comparableExisting = {
+            ...existing,
+            updated: 0
+        };
+
+        const comparableNext = {
+            ...next,
+            updated: 0
+        };
+
+        if (
+            JSON.stringify(comparableExisting) ===
+            JSON.stringify(comparableNext)
+        ) {
+            return false;
+        }
+
+        priceCache[itemId] =
+            next;
+
+        schedulePriceCacheSave();
+
+        return true;
+    }
+
+    function getCachedPriceResolution(itemId) {
+        const record =
+            getCachedPriceRecord(itemId);
+
+        const ask =
+            Number(record.ask) || 0;
+
+        if (ask > 0) {
+            return {
+                price: ask,
+                source:
+                    record.askSource ||
+                    'Exchange Listing',
+                exact: true
+            };
+        }
+
+        const lastSold =
+            Number(record.lastSold) || 0;
+
+        if (lastSold > 0) {
+            return {
+                price: lastSold,
+                source:
+                    record.lastSoldSource ||
+                    'Last Sold',
+                exact: false
+            };
+        }
+
+        const vendorPrice =
+            Number(record.vendorPrice) ||
+            Number(
+                BUILT_IN_VENDOR_PRICES[itemId]
+            ) ||
+            0;
+
+        if (vendorPrice > 0) {
+            return {
+                price: vendorPrice,
+                source:
+                    record.vendorSource ||
+                    'Vendor',
+                exact: false
+            };
+        }
+
+        return {
+            price: 0,
+            source: 'Unavailable',
+            exact: false
+        };
     }
 
     function getCachedPrice(itemId) {
-        const cached =
-            priceCache[itemId];
-
-        if (
-            typeof cached ===
-            'number'
-        ) {
-            return cached;
-        }
-
-        if (
-            cached &&
-            typeof cached ===
-                'object'
-        ) {
-            return (
-                Number(cached.price) ||
-                0
-            );
-        }
-
-        return 0;
+        return getCachedPriceResolution(
+            itemId
+        ).price;
     }
+
+    function preloadVendorPrices() {
+        Object.entries(
+            BUILT_IN_VENDOR_PRICES
+        ).forEach(
+            ([itemId, vendorPrice]) => {
+                setCachedMarketData(
+                    Number(itemId),
+                    {
+                        vendorPrice,
+                        vendorSource:
+                            'Built-in Vendor'
+                    }
+                );
+            }
+        );
+    }
+
+    function syncQuartermasterPriceCache(
+        force = false
+    ) {
+        const now =
+            Date.now();
+
+        if (
+            !force &&
+            now - lastQuartermasterSyncAt <
+                1500
+        ) {
+            return 0;
+        }
+
+        lastQuartermasterSyncAt =
+            now;
+
+        let quartermasterState;
+
+        try {
+            quartermasterState =
+                JSON.parse(
+                    localStorage.getItem(
+                        QUARTERMASTER_STORAGE_KEY
+                    ) || '{}'
+                );
+        } catch {
+            return 0;
+        }
+
+        const updatedAt =
+            Number(
+                quartermasterState?.updatedAt
+            ) || 0;
+
+        if (
+            !force &&
+            updatedAt > 0 &&
+            updatedAt ===
+                lastQuartermasterUpdatedAt
+        ) {
+            return 0;
+        }
+
+        lastQuartermasterUpdatedAt =
+            updatedAt;
+
+        let captured = 0;
+
+        Object.values(
+            quartermasterState?.prices || {}
+        ).forEach(
+            record => {
+                const itemId =
+                    ITEM_ID_BY_NAME.get(
+                        normalizeItemName(
+                            record?.name
+                        )
+                    );
+
+                if (!itemId) {
+                    return;
+                }
+
+                const patch = {
+                    ask:
+                        Number(record.ask) || 0,
+                    bid:
+                        Number(record.bid) || 0,
+                    askSource:
+                        'Quartermaster Listing',
+                    bidSource:
+                        'Quartermaster Buy Order'
+                };
+
+                const lastSold =
+                    Number(
+                        record.lastSold ||
+                        record.recentTradeMedian
+                    ) || 0;
+
+                const vendorPrice =
+                    Number(
+                        record.vendorPrice
+                    ) || 0;
+
+                if (lastSold > 0) {
+                    patch.lastSold = lastSold;
+                    patch.lastSoldSource =
+                        'Quartermaster Last Sold';
+                }
+
+                if (vendorPrice > 0) {
+                    patch.vendorPrice = vendorPrice;
+                    patch.vendorSource =
+                        'Quartermaster Vendor';
+                }
+
+                const changed =
+                    setCachedMarketData(
+                        itemId,
+                        patch
+                    );
+
+                if (changed) {
+                    captured += 1;
+                }
+            }
+        );
+
+        return captured;
+    }
+
+    preloadVendorPrices();
+    syncQuartermasterPriceCache(true);
 
     // =========================================================
     // COMBAT DETECTION
@@ -3997,34 +4296,314 @@
     // MARKET
     // =========================================================
 
+    function directMarketCells(row) {
+        const tableCells =
+            Array.from(
+                row.querySelectorAll(
+                    ':scope > td'
+                )
+            );
+
+        if (tableCells.length > 0) {
+            return tableCells;
+        }
+
+        return Array.from(
+            row.children
+        ).filter(
+            element =>
+                element instanceof HTMLElement &&
+                !element.matches(
+                    'script, style'
+                )
+        );
+    }
+
+    function marketNumberFromCell(cell) {
+        if (!(cell instanceof HTMLElement)) {
+            return 0;
+        }
+
+        const text =
+            String(
+                cell.innerText ||
+                cell.textContent ||
+                ''
+            ).trim();
+
+        if (
+            !text ||
+            /^[—–-]+$/.test(text)
+        ) {
+            return 0;
+        }
+
+        return decimalFromText(text);
+    }
+
+    function findMarketHeaderCells(row) {
+        const table =
+            row.closest('table');
+
+        if (table) {
+            const headerRow =
+                table.querySelector(
+                    'thead tr'
+                ) ||
+                Array.from(
+                    table.querySelectorAll('tr')
+                ).find(
+                    candidate =>
+                        /best ask|best bid|weekly volume/i
+                            .test(
+                                candidate.innerText || ''
+                            )
+                );
+
+            if (headerRow) {
+                return Array.from(
+                    headerRow.querySelectorAll(
+                        ':scope > th, :scope > td'
+                    )
+                );
+            }
+        }
+
+        return [];
+    }
+
+    function buildMarketColumnMap(row) {
+        const map = {};
+
+        findMarketHeaderCells(row)
+            .forEach(
+                (header, index) => {
+                    const label =
+                        normalizeItemName(
+                            header.innerText
+                        );
+
+                    if (label.includes('item')) {
+                        map.item = index;
+                    }
+
+                    if (label.includes('best ask')) {
+                        map.ask = index;
+                    }
+
+                    if (label.includes('best bid')) {
+                        map.bid = index;
+                    }
+
+                    if (label.includes('weekly volume')) {
+                        map.weeklyVolume = index;
+                    }
+                }
+            );
+
+        return map;
+    }
+
+    function detectTrackedMarketItemId(
+        row,
+        itemCell
+    ) {
+        const rawId =
+            row.getAttribute(
+                'data-mkt-item-type-id'
+            ) ||
+            row.dataset.mktItemTypeId ||
+            row.dataset.mktItem ||
+            row.dataset.itemId ||
+            row.querySelector(
+                '[data-mkt-item-type-id]'
+            )?.getAttribute(
+                'data-mkt-item-type-id'
+            ) ||
+            '';
+
+        const itemId =
+            Number(rawId);
+
+        if (
+            Number.isFinite(itemId) &&
+            TRACKED_IDS.has(itemId)
+        ) {
+            return itemId;
+        }
+
+        const candidates = [
+            itemCell?.dataset?.itemName,
+            itemCell?.querySelector(
+                '[data-item-name]'
+            )?.dataset?.itemName,
+            itemCell?.querySelector('img[alt]')?.alt,
+            itemCell?.innerText,
+            row.querySelector('img[alt]')?.alt,
+            row.innerText
+        ];
+
+        for (const candidate of candidates) {
+            const normalized =
+                normalizeItemName(candidate);
+
+            for (
+                const [itemName, trackedId]
+                of ITEM_ID_BY_NAME
+            ) {
+                if (
+                    normalized === itemName ||
+                    normalized.includes(itemName)
+                ) {
+                    return trackedId;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    function scanVisibleExchangePrices() {
+        const rows =
+            document.querySelectorAll(
+                [
+                    'tr.mkt-row[data-mkt-item]',
+                    'tr.mkt-row',
+                    '[data-mkt-item]'
+                ].join(',')
+            );
+
+        let captured = 0;
+        const seen = new Set();
+
+        rows.forEach(
+            row => {
+                if (
+                    !(row instanceof HTMLElement) ||
+                    seen.has(row)
+                ) {
+                    return;
+                }
+
+                seen.add(row);
+
+                const cells =
+                    directMarketCells(row);
+
+                if (cells.length < 5) {
+                    return;
+                }
+
+                const map =
+                    buildMarketColumnMap(row);
+
+                const hasMappedColumns =
+                    Number.isInteger(map.ask) ||
+                    Number.isInteger(map.bid);
+
+                const statusText =
+                    String(
+                        cells[cells.length - 1]
+                            ?.innerText || ''
+                    );
+
+                const looksLikeSummary =
+                    cells.length >= 7 &&
+                    /abundant|high supply|low supply|stable/i
+                        .test(statusText);
+
+                if (
+                    !hasMappedColumns &&
+                    !looksLikeSummary
+                ) {
+                    return;
+                }
+
+                const itemIndex =
+                    Number.isInteger(map.item)
+                        ? map.item
+                        : 0;
+
+                const askIndex =
+                    Number.isInteger(map.ask)
+                        ? map.ask
+                        : 1;
+
+                const bidIndex =
+                    Number.isInteger(map.bid)
+                        ? map.bid
+                        : 2;
+
+                const itemId =
+                    detectTrackedMarketItemId(
+                        row,
+                        cells[itemIndex]
+                    );
+
+                if (!itemId) {
+                    return;
+                }
+
+                if (
+                    setCachedMarketData(
+                        itemId,
+                        {
+                            ask:
+                                marketNumberFromCell(
+                                    cells[askIndex]
+                                ),
+                            bid:
+                                marketNumberFromCell(
+                                    cells[bidIndex]
+                                ),
+                            askSource:
+                                'Exchange Listing',
+                            bidSource:
+                                'Exchange Buy Order'
+                        }
+                    )
+                ) {
+                    captured += 1;
+                }
+            }
+        );
+
+        return captured;
+    }
+
     function getOpenExchangeItemId() {
+        const directId =
+            Number(
+                document.querySelector(
+                    '.mkt-detail-stats [data-mkt-item-type-id], .mkt-detail-page [data-mkt-item-type-id]'
+                )?.getAttribute(
+                    'data-mkt-item-type-id'
+                ) || 0
+            );
+
+        if (
+            Number.isFinite(directId) &&
+            TRACKED_IDS.has(directId)
+        ) {
+            return directId;
+        }
+
         const breadcrumbs =
             document.querySelector(
                 '.mkt-detail-crumbs'
             );
 
-        if (!breadcrumbs) {
-            return null;
-        }
-
         const text =
-            breadcrumbs.textContent
-                .replace(/\s+/g, ' ')
-                .trim()
-                .toLowerCase();
+            normalizeItemName(
+                breadcrumbs?.textContent
+            );
 
         for (
-            const [id, name]
-            of Object.entries(
-                ITEM_NAMES
-            )
+            const [itemName, itemId]
+            of ITEM_ID_BY_NAME
         ) {
-            if (
-                text.includes(
-                    name.toLowerCase()
-                )
-            ) {
-                return Number(id);
+            if (text.includes(itemName)) {
+                return itemId;
             }
         }
 
@@ -4033,159 +4612,266 @@
 
     function getLastSoldPriceFromOpenItem() {
         const element =
-            document.querySelector(
-                '.mkt-detail-fills-rows .mkt-row .mkt-detail-order-price'
+            Array.from(
+                document.querySelectorAll(
+                    '.mkt-detail-fills-rows .mkt-row .mkt-detail-order-price'
+                )
+            ).find(
+                candidate =>
+                    candidate instanceof HTMLElement &&
+                    candidate.offsetParent !== null
             );
-
-        if (!element) {
-            return null;
-        }
 
         const price =
             decimalFromText(
-                element.textContent
+                element?.textContent
             );
 
         return price > 0
             ? price
-            : null;
+            : 0;
     }
 
-    function scanMarketPrices() {
-        document
-            .querySelectorAll(
-                'tr.mkt-row[data-mkt-item]'
-            )
-            .forEach(
-                row => {
+    function exactMarketTextElements(
+        root,
+        wanted
+    ) {
+        const target =
+            normalizeItemName(wanted);
 
-                    const itemId =
-                        Number(
-                            row.dataset
-                                .mktItem
-                        );
+        return Array.from(
+            (root || document)
+                .querySelectorAll('*')
+        ).filter(
+            element =>
+                element instanceof HTMLElement &&
+                element.offsetParent !== null &&
+                normalizeItemName(
+                    element.textContent
+                ) === target
+        );
+    }
 
-                    if (
-                        !Number.isFinite(itemId) ||
-                        itemId <= 0
-                    ) {
-                        return;
-                    }
+    function marketDetailValueByLabel(
+        root,
+        label
+    ) {
+        const labelElement =
+            exactMarketTextElements(
+                root,
+                label
+            )[0];
 
-                    const element =
-                        row.querySelector(
-                            '.mkt-price-main'
-                        );
+        if (!labelElement) {
+            return 0;
+        }
 
-                    if (!element) {
-                        return;
-                    }
+        for (
+            let container =
+                    labelElement.parentElement,
+                depth = 0;
+            container && depth < 4;
+            container =
+                container.parentElement,
+                depth += 1
+        ) {
+            const children =
+                Array.from(
+                    container.children
+                ).filter(
+                    child =>
+                        child instanceof HTMLElement
+                );
 
-                    const price =
+            const labelIndex =
+                children.indexOf(
+                    labelElement
+                );
+
+            if (labelIndex >= 0) {
+                for (
+                    let index =
+                            labelIndex + 1;
+                    index < children.length;
+                    index += 1
+                ) {
+                    const value =
                         decimalFromText(
-                            element.textContent
+                            children[index]
+                                .innerText
                         );
 
-                    if (price > 0) {
-                        setCachedPrice(
-                            itemId,
-                            price,
-                            'listing'
-                        );
+                    if (value > 0) {
+                        return value;
                     }
                 }
-            );
-
-        const itemId =
-            getOpenExchangeItemId();
-
-        if (
-            itemId !== null
-        ) {
-            const price =
-                getLastSoldPriceFromOpenItem();
-
-            if (
-                price !== null
-            ) {
-                setCachedPrice(
-                    itemId,
-                    price,
-                    'last-sale'
-                );
             }
         }
 
-        checkForMissingPrices();
+        return 0;
     }
 
-    function isVisibleElement(
-        element
-    ) {
-        if (!(element instanceof HTMLElement)) {
-            return false;
-        }
-
-        const computed =
-            window.getComputedStyle(
-                element
-            );
-
-        return (
-            !element.hidden &&
-            computed.display !==
-                'none' &&
-            computed.visibility !==
-                'hidden' &&
-            Number(
-                computed.opacity || 1
-            ) !== 0 &&
-            element.getClientRects()
-                .length > 0
-        );
-    }
-
-    function isExchangeOpen() {
-        const candidates =
-            [
-                document.querySelector(
-                    '#market-panel'
-                ),
-                document.querySelector(
-                    '#mkt-tab-exchange'
-                ),
-                document.querySelector(
-                    '.market-panel--open'
-                )
-            ];
-
-        return candidates.some(
-            isVisibleElement
-        );
-    }
-
-    function isPortInventoryOpen() {
-        const inventoryPanel =
+    function getLowestAskFromOpenItem() {
+        const root =
             document.querySelector(
-                '#inventory-panel'
+                '#mkt-tab-exchange'
+            ) || document;
+
+        const estimatedAsk =
+            marketDetailValueByLabel(
+                root,
+                'ESTIMATED ASK'
             );
 
-        if (!isVisibleElement(inventoryPanel)) {
+        if (estimatedAsk > 0) {
+            return estimatedAsk;
+        }
+
+        const sellerLabel =
+            exactMarketTextElements(
+                root,
+                'SELLER'
+            )[0];
+
+        const buyerLabel =
+            exactMarketTextElements(
+                root,
+                'BUYER'
+            )[0];
+
+        if (!sellerLabel) {
+            return 0;
+        }
+
+        const rows =
+            Array.from(
+                root.querySelectorAll(
+                    'tr, [role="row"], [class*="row"]'
+                )
+            );
+
+        for (const row of rows) {
+            if (!(row instanceof HTMLElement)) {
+                continue;
+            }
+
+            const afterSeller =
+                Boolean(
+                    sellerLabel.compareDocumentPosition(
+                        row
+                    ) &
+                    Node.DOCUMENT_POSITION_FOLLOWING
+                );
+
+            if (!afterSeller) {
+                continue;
+            }
+
+            if (buyerLabel) {
+                const beforeBuyer =
+                    Boolean(
+                        row.compareDocumentPosition(
+                            buyerLabel
+                        ) &
+                        Node.DOCUMENT_POSITION_FOLLOWING
+                    );
+
+                if (!beforeBuyer) {
+                    continue;
+                }
+            }
+
+            const cells =
+                Array.from(
+                    row.children
+                ).filter(
+                    child =>
+                        child instanceof HTMLElement &&
+                        child.offsetParent !== null &&
+                        normalizeItemName(
+                            child.innerText
+                        )
+                );
+
+            if (
+                cells.length < 3 ||
+                cells.length > 6
+            ) {
+                continue;
+            }
+
+            const preferred =
+                decimalFromText(
+                    cells[2]?.innerText
+                );
+
+            if (preferred > 0) {
+                return preferred;
+            }
+        }
+
+        return 0;
+    }
+
+    function getVendorPriceFromOpenItem() {
+        const cells =
+            Array.from(
+                document.querySelectorAll(
+                    '.mkt-detail-stats-cell'
+                )
+            );
+
+        const vendorCell =
+            cells.find(
+                cell =>
+                    normalizeItemName(
+                        cell.querySelector(
+                            '.mkt-detail-stats-label'
+                        )?.textContent
+                    ) === 'vendor price'
+            );
+
+        return decimalFromText(
+            vendorCell?.querySelector(
+                '.mkt-detail-stats-val'
+            )?.textContent
+        );
+    }
+
+    function scanOpenExchangeItem() {
+        const itemId =
+            getOpenExchangeItemId();
+
+        if (!itemId) {
             return false;
         }
 
-        /*
-         * Only pause for the port inventory view where both the
-         * ship cargo and city warehouse grids are mounted.
-         */
-        return Boolean(
-            inventoryPanel.querySelector(
-                '#inv-cargo-grid'
-            ) &&
-            inventoryPanel.querySelector(
-                '#inv-wh-grid'
-            )
+        return setCachedMarketData(
+            itemId,
+            {
+                ask:
+                    getLowestAskFromOpenItem(),
+                lastSold:
+                    getLastSoldPriceFromOpenItem(),
+                vendorPrice:
+                    getVendorPriceFromOpenItem() ||
+                    BUILT_IN_VENDOR_PRICES[itemId] ||
+                    0,
+                askSource:
+                    'Exchange Listing',
+                lastSoldSource:
+                    'Last Sold',
+                vendorSource:
+                    'Exchange Vendor'
+            }
         );
+    }
+
+    function scanMarketPrices() {
+        syncQuartermasterPriceCache();
+        scanVisibleExchangePrices();
+        scanOpenExchangeItem();
+        checkForMissingPrices();
     }
 
     // =========================================================
@@ -4229,14 +4915,6 @@
     }
 
     function scanItemConsumption() {
-        if (
-            !combatRunning ||
-            !settings
-                .combatTrackerEnabled
-        ) {
-            return;
-        }
-
         const inCombat =
             isActuallyInCombat();
 
@@ -4247,6 +4925,32 @@
          */
         const quantities =
             getEquippedConsumables();
+
+        /*
+         * Maintain a passive ship-only baseline before combat begins.
+         * This lets an automatically started PvE session count the first
+         * fight's ammo, food, and repair use instead of beginning only
+         * after the first victory has already consumed those items.
+         */
+        if (
+            !combatRunning ||
+            !settings.combatTrackerEnabled
+        ) {
+            if (!inCombat) {
+                TRACKED_IDS.forEach(
+                    itemId => {
+                        lastQuantities.set(
+                            itemId,
+                            quantities.get(itemId) || 0
+                        );
+                    }
+                );
+
+                pendingItemDecreases.clear();
+            }
+
+            return;
+        }
 
         /*
          * Outside combat, refresh the ship-only baseline without
@@ -4848,7 +5552,29 @@
         ) {
             combatRunning = true;
 
-            initializeItemTracking();
+            if (lastQuantities.size === 0) {
+                initializeItemTracking();
+            } else {
+                pendingItemDecreases.clear();
+
+                getEquippedConsumables()
+                    .forEach(
+                        (quantity, itemId) => {
+                            const price =
+                                getCachedPrice(itemId);
+
+                            if (
+                                quantity > 0 &&
+                                price > 0
+                            ) {
+                                sessionPrices.set(
+                                    itemId,
+                                    price
+                                );
+                            }
+                        }
+                    );
+            }
 
             combatPanel.style.display =
                 settings.combatSessionLayout ===
@@ -5250,7 +5976,7 @@
         const match =
             element.textContent
                 .match(
-                    /(\d+)\s*s/i
+                    /(\d+(?:\.\d+)?)\s*s/i
                 );
 
         return match
@@ -5675,6 +6401,30 @@
     // ACTIVITY REWARD POPUPS
     // =========================================================
 
+    function activityRewardMatchesCurrentTask(
+        itemName
+    ) {
+        const reward =
+            normalizeActivityKeyPart(
+                itemName
+            );
+
+        const task =
+            normalizeActivityKeyPart(
+                activityTaskName
+            );
+
+        if (!reward || !task) {
+            return false;
+        }
+
+        return (
+            reward === task ||
+            task.endsWith(`_${reward}`) ||
+            reward.endsWith(`_${task}`)
+        );
+    }
+
     function processActivityRewardElement(
         element
     ) {
@@ -5720,11 +6470,17 @@
                 match[1]
             );
 
+        const itemName =
+            match[2]?.trim() || '';
+
         if (
             !Number.isFinite(
                 quantity
             ) ||
-            quantity <= 0
+            quantity <= 0 ||
+            !activityRewardMatchesCurrentTask(
+                itemName
+            )
         ) {
             return;
         }
@@ -6399,17 +7155,10 @@
     let cachedQueueBadgeCount = 0;
 
     /*
-     * Remember tasks that were observed waiting in Tidefall's
-     * queue. When the final queued task becomes active, Tidefall
-     * removes the queue badge and rows. Keep Queue Remaining
-     * visible for that promoted task until it finishes.
+     * Tidefall can briefly remove and rebuild queue UI while it
+     * promotes an entry. Preserve the countdown only across that
+     * short handoff, not for the entire final promoted task.
      */
-    const queuedPendingTaskNames =
-        new Set();
-
-    let queuePromotedTaskName =
-        '';
-
     /*
      * Tidefall briefly removes the active-task panel while
      * promoting the next queued task. Preserve queue state across
@@ -6424,8 +7173,34 @@
     let queueTransitionHoldStartedAt =
         0;
 
+    let queueLastConfirmedWaitingCount =
+        0;
+
+    let queueUiSettleUntil =
+        0;
+
     const QUEUE_TRANSITION_GRACE_MS =
         15000;
+
+    const QUEUE_UI_SETTLE_MS =
+        2000;
+
+    function isQueueBadgeVisible(badge) {
+        if (!(badge instanceof HTMLElement)) {
+            return false;
+        }
+
+        const computed =
+            window.getComputedStyle(badge);
+
+        return (
+            !badge.hidden &&
+            computed.display !== 'none' &&
+            computed.visibility !== 'hidden' &&
+            computed.opacity !== '0' &&
+            badge.getClientRects().length > 0
+        );
+    }
 
     function getQueuedActivityRows() {
         return Array.from(
@@ -6451,8 +7226,7 @@
             );
 
         if (
-            !badge ||
-            badge.hidden ||
+            !isQueueBadgeVisible(badge) ||
             queueCount <= 0
         ) {
             return;
@@ -7314,10 +8088,15 @@
                 '#task-queue-badge'
             );
 
+        const queueBadgeVisible =
+            isQueueBadgeVisible(badge);
+
         const queueCount =
-            numberFromText(
-                badge?.textContent
-            );
+            queueBadgeVisible
+                ? numberFromText(
+                    badge?.textContent
+                )
+                : 0;
 
         const rows =
             getQueuedActivitySnapshot(
@@ -7326,15 +8105,18 @@
 
         const hasWaitingQueue =
             Boolean(
-                badge &&
-                !badge.hidden &&
+                queueBadgeVisible &&
                 queueCount > 0 &&
                 rows.length > 0
             );
 
         if (hasWaitingQueue) {
-            queuePromotedTaskName =
-                '';
+            queueLastConfirmedWaitingCount =
+                queueCount;
+
+            queueUiSettleUntil =
+                Date.now() +
+                QUEUE_UI_SETTLE_MS;
 
             queueTransitionGraceUntil =
                 Date.now() +
@@ -7414,19 +8196,6 @@
 
                 const taskName =
                     getQueuedTaskName(row);
-
-                const canonicalTaskName =
-                    getCanonicalActivityTaskName(
-                        taskName
-                    );
-
-                if (canonicalTaskName) {
-                    queuedPendingTaskNames.add(
-                        normalizeActivityKeyPart(
-                            canonicalTaskName
-                        )
-                    );
-                }
 
                 const stats =
                     getPredictedTaskStats(
@@ -7568,15 +8337,19 @@
                 };
             }
 
-            queuePromotedTaskName =
-                '';
-
-            queuedPendingTaskNames.clear();
-
             queueTransitionGraceUntil =
                 0;
 
             queueTransitionHoldSeconds =
+                0;
+
+            queueTransitionHoldStartedAt =
+                0;
+
+            queueLastConfirmedWaitingCount =
+                0;
+
+            queueUiSettleUntil =
                 0;
 
             return null;
@@ -7589,68 +8362,42 @@
                 )
             );
 
+        /*
+         * When more than one task was waiting, Tidefall can mount the
+         * new active task a moment before it restores the reduced queue
+         * badge and rows. Preserve the estimate only for that short UI
+         * settling window. A final promoted task, or a queue changed by
+         * deleting its first entry, must stop displaying Queue Remaining
+         * once no waiting entries remain.
+         */
         if (
-            !queuePromotedTaskName &&
-            currentCanonical &&
-            queuedPendingTaskNames.has(
-                currentCanonical
-            )
+            queueLastConfirmedWaitingCount > 1 &&
+            Date.now() <= queueUiSettleUntil &&
+            queueTransitionHoldSeconds > 0
         ) {
-            queuePromotedTaskName =
-                currentCanonical;
+            const heldElapsed =
+                Math.max(
+                    0,
+                    (
+                        Date.now() -
+                        queueTransitionHoldStartedAt
+                    ) / 1000
+                );
 
-            queuedPendingTaskNames.delete(
-                currentCanonical
-            );
-        }
-
-        if (
-            !queuePromotedTaskName ||
-            currentCanonical !==
-                queuePromotedTaskName
-        ) {
-            if (
-                Date.now() <=
-                    queueTransitionGraceUntil &&
-                queueTransitionHoldSeconds > 0
-            ) {
-                const heldElapsed =
+            return {
+                seconds:
                     Math.max(
-                        0,
-                        (
-                            Date.now() -
-                            queueTransitionHoldStartedAt
-                        ) / 1000
-                    );
+                        1,
+                        queueTransitionHoldSeconds -
+                            heldElapsed
+                    ),
 
-                return {
-                    seconds:
-                        Math.max(
-                            1,
-                            queueTransitionHoldSeconds -
-                                heldElapsed
-                        ),
+                approximate:
+                    queueCountdownApproximate,
 
-                    approximate:
-                        queueCountdownApproximate,
-
-                    signature:
-                        'queue-transition-hold'
-                };
-            }
-
-            queuePromotedTaskName =
-                '';
-
-            queuedPendingTaskNames.clear();
-
-            queueTransitionGraceUntil =
-                0;
-
-            queueTransitionHoldSeconds =
-                0;
-
-            return null;
+                signature:
+                    `queue-ui-settle:${currentCanonical}`
+            };
         }
 
         queueTransitionGraceUntil =
@@ -7659,29 +8406,16 @@
         queueTransitionHoldSeconds =
             0;
 
-        const activeSeconds =
-            getCurrentTaskRemainingSeconds();
+        queueTransitionHoldStartedAt =
+            0;
 
-        if (
-            !Number.isFinite(activeSeconds) ||
-            activeSeconds <= 0
-        ) {
-            queuePromotedTaskName =
-                '';
+        queueLastConfirmedWaitingCount =
+            0;
 
-            return null;
-        }
+        queueUiSettleUntil =
+            0;
 
-        return {
-            seconds:
-                activeSeconds,
-
-            approximate:
-                false,
-
-            signature:
-                `promoted:${currentCanonical}:${getActivityCyclesLeft() ?? 0}:${activityCycleSeconds ?? 0}`
-        };
+        return null;
     }
 
     function updateQueueRemainingDisplay() {
@@ -7715,6 +8449,18 @@
 
             activityQueueRemainingElement.textContent =
                 '—';
+
+            queueCountdownSignature =
+                '';
+
+            queueCountdownBaseSeconds =
+                0;
+
+            queueCountdownStartedAt =
+                0;
+
+            queueCountdownApproximate =
+                false;
 
             return;
         }
@@ -7772,6 +8518,18 @@
             queueHydratedOnce =
                 false;
 
+            queueCountdownSignature =
+                '';
+
+            queueCountdownBaseSeconds =
+                0;
+
+            queueCountdownStartedAt =
+                0;
+
+            queueCountdownApproximate =
+                false;
+
             return;
         }
 
@@ -7788,19 +8546,6 @@
     // ACTIVITY DISPLAY
     // =========================================================
 
-    function getActivityElapsedSeconds() {
-        if (
-            !activityStarted ||
-            !activityStartTime
-        ) {
-            return 0;
-        }
-
-        return (
-            Date.now() -
-            activityStartTime
-        ) / 1000;
-    }
 
     function updateActivityDisplay() {
         updateActivityLevelEstimate();
@@ -7810,7 +8555,6 @@
             !settings
                 .activityTrackerEnabled ||
             !activityStarted ||
-            activityActions <= 0 ||
             activityPanelClosed
         ) {
             activityPanel.style.display =
@@ -7899,10 +8643,6 @@
                         .toLocaleString();
         }
 
-        activityElapsedElement.textContent =
-            formatDuration(
-                getActivityElapsedSeconds()
-            );
 
         activitySkillElement.textContent =
             `${titleCaseSkill(activitySkill)} • ${activityTaskName}`;
@@ -7929,14 +8669,10 @@
             getCurrentActivity();
 
         if (!activity) {
-            activityPanel.style.display =
-                'none';
-
             /*
              * Tidefall briefly removes the active-task DOM while
-             * promoting a queued task. Keep the header mounted
-             * during that gap so Queue Remaining does not blink
-             * off before the promoted task appears.
+             * promoting a queued task. Keep whichever Activity layout
+             * the user selected mounted during that short handoff.
              */
             const preservingQueueTransition =
                 settings.activityQueueRemaining &&
@@ -7944,12 +8680,20 @@
                 queueTransitionHoldSeconds > 0;
 
             if (!preservingQueueTransition) {
+                activityPanel.style.display =
+                    'none';
+
                 activityHeaderLayout
                     ?.classList.remove(
                         'tf-active'
                     );
-            } else {
+            } else if (
+                settings.activitySessionLayout ===
+                    'header'
+            ) {
                 updateActivityHeaderLayout();
+            } else {
+                updateActivityDisplay();
             }
 
             return;
@@ -8232,6 +8976,12 @@
     }
 
     function checkNavigationFollowShip() {
+        if (!settings.startupFollowShipEnabled) {
+            navigationWasActive = false;
+            navigationFollowPending = false;
+            return;
+        }
+
         const navigationActive =
             isShipTravelActivityActive();
 
@@ -8660,10 +9410,6 @@
                 <span id="tf-header-queue" class="tf-activity-header-value">—</span>
             </span>
 
-            <span class="tf-activity-header-stat" data-kind="elapsed">
-                <span class="tf-activity-header-label">Elapsed</span>
-                <span id="tf-header-elapsed" class="tf-activity-header-value">—</span>
-            </span>
 
             <span id="tf-header-task" class="tf-activity-header-task"></span>
         `;
@@ -8760,22 +9506,21 @@
         const preservingQueueTransition =
             Boolean(
                 queueEstimate &&
-                (
-                    queuePromotedTaskName ||
-                    (
-                        Date.now() <= queueTransitionGraceUntil &&
-                        queueTransitionHoldSeconds > 0
-                    )
-                )
+                Date.now() <= queueTransitionGraceUntil &&
+                queueTransitionHoldSeconds > 0
             );
 
+        /*
+         * Keep the tracker visible as soon as an activity is active,
+         * even before its first completed action. This prevents the
+         * header from closing when a queue promotes its final item and
+         * Queue Remaining correctly disappears. Historical rates are
+         * shown immediately when available; otherwise placeholders remain
+         * until the first action completes.
+         */
         const visible =
             settings.activityTrackerEnabled &&
             activityStarted &&
-            (
-                activityActions > 0 ||
-                preservingQueueTransition
-            ) &&
             !activityPanelClosed &&
             (
                 activityStillActive ||
@@ -8908,12 +9653,6 @@
         ).textContent =
             queueText;
 
-        activityHeaderLayout.querySelector(
-            '#tf-header-elapsed'
-        ).textContent =
-            formatDuration(
-                getActivityElapsedSeconds()
-            );
 
         activityHeaderLayout.querySelector(
             '#tf-header-task'
@@ -9454,7 +10193,7 @@
             'tf-firstmate-version-value';
 
         version.textContent =
-            `v${FIRST_MATE_VERSION}`;
+            `v${FIRST_MATE_VERSION} · ${FIRST_MATE_BUILD_ID}`;
 
         const githubButton =
             document.createElement(
@@ -10777,9 +11516,25 @@
         }
     );
 
+    let combatObserverTimer =
+        null;
+
     const combatObserver =
         new MutationObserver(
-            scanVictories
+            () => {
+                if (combatObserverTimer !== null) {
+                    return;
+                }
+
+                combatObserverTimer =
+                    window.setTimeout(
+                        () => {
+                            combatObserverTimer = null;
+                            scanVictories();
+                        },
+                        50
+                    );
+            }
         );
 
     combatObserver.observe(
@@ -10913,6 +11668,7 @@
 
     injectFirstMateSettingsTab();
 
+    syncQuartermasterPriceCache(true);
     scanMarketPrices();
 
     updateCombatDisplay();
@@ -10929,4 +11685,9 @@
 
 
     void applyStartupDisplayAndCamera();
+
+    console.log(
+        `[Tidefall First Mate] Loaded v${FIRST_MATE_VERSION} (${FIRST_MATE_BUILD_ID})`
+    );
+
 })();
