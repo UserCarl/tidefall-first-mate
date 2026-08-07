@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.8.2
+// @version      1.8.3
 // @description  Combat tracker, combat warnings, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -24,8 +24,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.8.2';
-    const FIRST_MATE_BUILD_ID = '2026-08-06-official';
+    const FIRST_MATE_VERSION = '1.8.3';
+    const FIRST_MATE_BUILD_ID = '2026-08-07-official';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -494,6 +494,102 @@
             ]
         )
     );
+
+    /*
+     * Tidefall can add new combat ammunition/consumables without
+     * First Mate knowing their IDs ahead of time. Learn those IDs
+     * directly from the live combat HUD so quantity tracking and
+     * warnings do not break when a new shot type is equipped.
+     */
+    function registerCombatHudItem(
+        element,
+        itemId
+    ) {
+        if (
+            !Number.isFinite(itemId) ||
+            itemId <= 0
+        ) {
+            return false;
+        }
+
+        if (TRACKED_IDS.has(itemId)) {
+            return true;
+        }
+
+        const title =
+            String(
+                element?.getAttribute?.('title') ||
+                element?.dataset?.itemName ||
+                ''
+            )
+                .replace(/\s+/g, ' ')
+                .trim();
+
+        const className =
+            String(
+                element?.className ||
+                ''
+            );
+
+        const isAmmo =
+            /combat-ammo-hud-mun-tile/i
+                .test(className) ||
+            /\bshot\b/i.test(title);
+
+        const isRepair =
+            /combat-ammo-hud-con-tile/i
+                .test(className) &&
+            /repair\s+hull|repair\s+kit|repair/i
+                .test(title);
+
+        const isFood =
+            /combat-ammo-hud-con-tile/i
+                .test(className) &&
+            /heal\s+crew|ration|stew|mackerel|sardine|salmon|tuna|swordfish|shark|steak|fillet|feast/i
+                .test(title);
+
+        if (
+            !isAmmo &&
+            !isRepair &&
+            !isFood
+        ) {
+            return false;
+        }
+
+        const itemName =
+            title
+                .replace(/\s+-\s+.*$/, '')
+                .trim() ||
+            `Combat Item ${itemId}`;
+
+        ITEM_NAMES[itemId] =
+            itemName;
+
+        TRACKED_IDS.add(
+            itemId
+        );
+
+        ITEM_ID_BY_NAME.set(
+            normalizeItemName(itemName),
+            itemId
+        );
+
+        if (isAmmo) {
+            AMMO_IDS.add(itemId);
+        } else if (isRepair) {
+            REPAIR_IDS.add(itemId);
+        } else if (isFood) {
+            FOOD_IDS.add(itemId);
+        }
+
+        console.info(
+            '[Tidefall First Mate] Learned combat item:',
+            itemId,
+            itemName
+        );
+
+        return true;
+    }
 
 
     // =========================================================
@@ -3348,7 +3444,8 @@
                         );
 
                     if (
-                        !TRACKED_IDS.has(
+                        !registerCombatHudItem(
+                            element,
                             itemId
                         )
                     ) {
