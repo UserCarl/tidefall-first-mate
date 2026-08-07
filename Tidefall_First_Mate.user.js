@@ -1,12 +1,10 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.8.1
+// @version      1.8.2
 // @description  Combat tracker, combat warnings, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
-// @updateURL    https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
-// @downloadURL  https://raw.githubusercontent.com/UserCarl/tidefall-first-mate/main/Tidefall_First_Mate.user.js
 // @grant        none
 // ==/UserScript==
 
@@ -26,8 +24,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.8.1';
-    const FIRST_MATE_BUILD_ID = '2026-08-05-official';
+    const FIRST_MATE_VERSION = '1.8.2';
+    const FIRST_MATE_BUILD_ID = '2026-08-06-official';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -3332,17 +3330,21 @@
             return quantities;
         }
 
+        /*
+         * Tidefall has used both data-item-id and data-item-type
+         * on item elements. Accept either so a markup change does
+         * not silently disable combat-consumable tracking.
+         */
         container
             .querySelectorAll(
-                '[data-item-id]'
+                '[data-item-id], [data-item-type]'
             )
             .forEach(
                 element => {
-
                     const itemId =
                         Number(
-                            element.dataset
-                                .itemId
+                            element.dataset.itemId ??
+                            element.dataset.itemType
                         );
 
                     if (
@@ -3353,44 +3355,73 @@
                         return;
                     }
 
-                    let quantity =
-                        null;
+                    let quantity = null;
+
+                    const datasetQuantity =
+                        element.dataset.qty ??
+                        element.dataset.quantity;
 
                     if (
-                        element.dataset.qty !==
+                        datasetQuantity !==
                             undefined &&
-                        element.dataset.qty !==
-                            ''
+                        datasetQuantity !== ''
                     ) {
-                        quantity =
+                        const parsed =
                             Number(
-                                element.dataset
-                                    .qty
+                                datasetQuantity
                             );
+
+                        if (
+                            Number.isFinite(
+                                parsed
+                            )
+                        ) {
+                            quantity = parsed;
+                        }
                     }
 
-                    if (
-                        quantity === null ||
-                        Number.isNaN(
-                            quantity
-                        )
-                    ) {
+                    if (quantity === null) {
                         const badge =
                             element.querySelector(
-                                '.mp-badge-count'
+                                '.mp-badge-count, [data-qty], [data-quantity]'
                             );
 
                         if (badge) {
-                            quantity =
-                                numberFromText(
-                                    badge.textContent
-                                );
+                            const badgeDatasetQuantity =
+                                badge.dataset?.qty ??
+                                badge.dataset?.quantity;
+
+                            if (
+                                badgeDatasetQuantity !==
+                                    undefined &&
+                                badgeDatasetQuantity !== ''
+                            ) {
+                                const parsed =
+                                    Number(
+                                        badgeDatasetQuantity
+                                    );
+
+                                if (
+                                    Number.isFinite(
+                                        parsed
+                                    )
+                                ) {
+                                    quantity = parsed;
+                                }
+                            }
+
+                            if (quantity === null) {
+                                quantity =
+                                    numberFromText(
+                                        badge.textContent
+                                    );
+                            }
                         }
                     }
 
                     if (
                         quantity !== null &&
-                        !Number.isNaN(
+                        Number.isFinite(
                             quantity
                         )
                     ) {
@@ -3404,7 +3435,6 @@
 
         return quantities;
     }
-
 
     function scanWarehouseConsumables() {
         const seen =
@@ -3621,69 +3651,26 @@
     function getItemQuantityForIds(
         idSet
     ) {
+        const quantities =
+            getEquippedConsumables();
+
+        for (
+            const [itemId, quantity]
+            of quantities
+        ) {
+            if (idSet.has(itemId)) {
+                return quantity;
+            }
+        }
+
         const container =
             document.querySelector(
                 '#combat-ammo-hud-munitions'
             );
 
-        if (!container) {
-            return null;
-        }
-
-        const elements =
-            container.querySelectorAll(
-                '[data-item-id]'
-            );
-
-        for (
-            const element
-            of elements
-        ) {
-            const itemId =
-                Number(
-                    element.dataset
-                        .itemId
-                );
-
-            if (
-                !idSet.has(itemId)
-            ) {
-                continue;
-            }
-
-            if (
-                element.dataset.qty !==
-                    undefined &&
-                element.dataset.qty !==
-                    ''
-            ) {
-                const quantity =
-                    Number(
-                        element.dataset.qty
-                    );
-
-                if (
-                    Number.isFinite(
-                        quantity
-                    )
-                ) {
-                    return quantity;
-                }
-            }
-
-            const badge =
-                element.querySelector(
-                    '.mp-badge-count'
-                );
-
-            if (badge) {
-                return numberFromText(
-                    badge.textContent
-                );
-            }
-        }
-
-        return 0;
+        return container
+            ? 0
+            : null;
     }
 
     // =========================================================
@@ -4885,13 +4872,8 @@
         const quantities =
             getEquippedConsumables();
 
-        TRACKED_IDS.forEach(
-            itemId => {
-                const quantity =
-                    quantities.get(
-                        itemId
-                    ) || 0;
-
+        quantities.forEach(
+            (quantity, itemId) => {
                 lastQuantities.set(
                     itemId,
                     quantity
@@ -4902,9 +4884,7 @@
                         itemId
                     );
 
-                if (
-                    price > 0
-                ) {
+                if (price > 0) {
                     sessionPrices.set(
                         itemId,
                         price
@@ -4914,78 +4894,35 @@
         );
     }
 
-    function scanItemConsumption() {
-        const inCombat =
-            isActuallyInCombat();
-
+    function refreshItemBaseline(
+        quantities
+    ) {
         /*
-         * Use only the ship's live combat HUD quantities for
-         * consumable tracking. Port-storage totals and cached
-         * warehouse quantities are intentionally excluded.
+         * An empty HUD snapshot usually means the combat UI is
+         * mounting/unmounting. Do not turn that temporary absence
+         * into a quantity of zero.
          */
-        const quantities =
-            getEquippedConsumables();
+        if (quantities.size === 0) {
+            return;
+        }
 
-        /*
-         * Maintain a passive ship-only baseline before combat begins.
-         * This lets an automatically started PvE session count the first
-         * fight's ammo, food, and repair use instead of beginning only
-         * after the first victory has already consumed those items.
-         */
-        if (
-            !combatRunning ||
-            !settings.combatTrackerEnabled
-        ) {
-            if (!inCombat) {
-                TRACKED_IDS.forEach(
-                    itemId => {
-                        lastQuantities.set(
-                            itemId,
-                            quantities.get(itemId) || 0
-                        );
-                    }
+        lastQuantities.clear();
+
+        quantities.forEach(
+            (quantity, itemId) => {
+                lastQuantities.set(
+                    itemId,
+                    quantity
                 );
-
-                pendingItemDecreases.clear();
             }
+        );
+    }
 
-            return;
-        }
-
-        /*
-         * Outside combat, refresh the ship-only baseline without
-         * charging any decreases. This prevents purchases,
-         * transfers, and dockside item use from affecting the
-         * PvE session while keeping the next fight's starting
-         * quantities accurate.
-         */
-        if (!inCombat) {
-            TRACKED_IDS.forEach(
-                itemId => {
-                    lastQuantities.set(
-                        itemId,
-                        quantities.get(
-                            itemId
-                        ) || 0
-                    );
-                }
-            );
-
-            pendingItemDecreases.clear();
-
-            return;
-        }
-
-        const now =
-            Date.now();
-
-        TRACKED_IDS.forEach(
-            itemId => {
-                const quantity =
-                    quantities.get(
-                        itemId
-                    ) || 0;
-
+    function recordItemConsumption(
+        quantities
+    ) {
+        quantities.forEach(
+            (quantity, itemId) => {
                 if (
                     !lastQuantities.has(
                         itemId
@@ -5004,87 +4941,45 @@
                         itemId
                     );
 
-                if (
-                    quantity >=
-                    previous
-                ) {
-                    lastQuantities.set(
+                if (quantity < previous) {
+                    const decrease =
+                        previous - quantity;
+
+                    consumedItems.set(
                         itemId,
-                        quantity
+                        (
+                            consumedItems.get(
+                                itemId
+                            ) || 0
+                        ) + decrease
                     );
 
-                    pendingItemDecreases.delete(
-                        itemId
-                    );
-
-                    return;
-                }
-
-                const decrease =
-                    previous -
-                    quantity;
-
-                const pending =
-                    pendingItemDecreases.get(
-                        itemId
-                    );
-
-                if (
-                    !pending ||
-                    pending.quantity !==
-                        quantity ||
-                    pending.previous !==
-                        previous
-                ) {
-                    pendingItemDecreases.set(
-                        itemId,
-                        {
-                            previous,
-                            quantity,
-                            decrease,
-                            since:
-                                now
-                        }
-                    );
-
-                    return;
-                }
-
-                if (
-                    now -
-                        pending.since <
-                    ITEM_DECREASE_CONFIRM_MS
-                ) {
-                    return;
-                }
-
-                consumedItems.set(
-                    itemId,
-                    (
-                        consumedItems.get(
+                    const price =
+                        getCachedPrice(
                             itemId
-                        ) || 0
-                    ) +
-                    decrease
-                );
+                        );
 
-                const price =
-                    getCachedPrice(
-                        itemId
-                    );
-
-                if (
-                    price > 0 &&
-                    !sessionPrices.has(
-                        itemId
-                    )
-                ) {
-                    sessionPrices.set(
-                        itemId,
-                        price
-                    );
+                    if (
+                        price > 0 &&
+                        !sessionPrices.has(
+                            itemId
+                        )
+                    ) {
+                        sessionPrices.set(
+                            itemId,
+                            price
+                        );
+                    }
                 }
 
+                /*
+                 * Commit the live HUD quantity immediately. Because
+                 * this scanner only charges while combat is active,
+                 * there is no need to wait 750 ms to distinguish a
+                 * warehouse transfer from real combat use. Waiting
+                 * allowed the HUD to disappear at battle end before
+                 * the decrease was ever committed.
+                 */
                 lastQuantities.set(
                     itemId,
                     quantity
@@ -5094,6 +4989,61 @@
                     itemId
                 );
             }
+        );
+    }
+
+    function scanItemConsumption() {
+        const inCombat =
+            isActuallyInCombat();
+
+        const quantities =
+            getEquippedConsumables();
+
+        if (
+            !settings.combatTrackerEnabled
+        ) {
+            if (!inCombat) {
+                refreshItemBaseline(
+                    quantities
+                );
+            }
+
+            pendingItemDecreases.clear();
+            return;
+        }
+
+        /*
+         * Outside combat, keep a clean baseline. Only real values
+         * returned by the combat HUD are stored; missing HUD nodes
+         * are never interpreted as zero inventory.
+         */
+        if (!inCombat) {
+            refreshItemBaseline(
+                quantities
+            );
+
+            pendingItemDecreases.clear();
+            return;
+        }
+
+        /*
+         * Auto-start sessions begin when the first victory is found.
+         * Track live decreases during that first fight as well, so
+         * its ammo/food/repair usage is already present when the
+         * victory starts the visible PvE session.
+         *
+         * If a running session was manually stopped after at least
+         * one kill, do not continue charging costs in the background.
+         */
+        if (
+            !combatRunning &&
+            combatKills > 0
+        ) {
+            return;
+        }
+
+        recordItemConsumption(
+            quantities
         );
     }
 
