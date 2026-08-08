@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.8.4
+// @version      1.8.5
 // @description  Combat tracker, combat warnings, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -24,8 +24,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.8.4';
-    const FIRST_MATE_BUILD_ID = '2026-08-08-ammo-live-total';
+    const FIRST_MATE_VERSION = '1.8.5';
+    const FIRST_MATE_BUILD_ID = '2026-08-08-ammo-tracking-test';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -260,6 +260,7 @@
     const COMBAT_SCAN_INTERVAL = 1000;
     const ITEM_SCAN_INTERVAL = 250;
     const ITEM_DECREASE_CONFIRM_MS = 750;
+    const ITEM_TRACKING_COMBAT_GRACE_MS = 2000;
     const MARKET_SCAN_INTERVAL = 1500;
     const DISPLAY_INTERVAL = 1000;
     const WARNING_SCAN_INTERVAL = 500;
@@ -3427,9 +3428,11 @@
         }
 
         /*
-         * Tidefall has used both data-item-id and data-item-type
-         * on item elements. Accept either so a markup change does
-         * not silently disable combat-consumable tracking.
+         * Tidefall can place the same item ID on both an outer tile
+         * and one or more nested HUD nodes while the tile is being
+         * rerendered. Read every valid candidate, but keep the highest
+         * quantity for an item instead of allowing the final DOM node
+         * to overwrite the value with a temporary zero or stale child.
          */
         container
             .querySelectorAll(
@@ -3454,25 +3457,66 @@
 
                     let quantity = null;
 
-                    const datasetQuantity =
+                    const readQuantity =
+                        node => {
+                            if (!node) {
+                                return null;
+                            }
+
+                            const raw =
+                                node.dataset?.qty ??
+                                node.dataset?.quantity;
+
+                            if (
+                                raw !== undefined &&
+                                raw !== ''
+                            ) {
+                                const parsed =
+                                    Number(raw);
+
+                                if (
+                                    Number.isFinite(parsed)
+                                ) {
+                                    return parsed;
+                                }
+                            }
+
+                            const text =
+                                String(
+                                    node.textContent || ''
+                                ).trim();
+
+                            if (text) {
+                                const parsed =
+                                    numberFromText(text);
+
+                                if (
+                                    Number.isFinite(parsed)
+                                ) {
+                                    return parsed;
+                                }
+                            }
+
+                            return null;
+                        };
+
+                    /*
+                     * Prefer explicit quantity data on the item node,
+                     * then its badge. The badge text is the final
+                     * fallback for older Tidefall markup.
+                     */
+                    const directRaw =
                         element.dataset.qty ??
                         element.dataset.quantity;
 
                     if (
-                        datasetQuantity !==
-                            undefined &&
-                        datasetQuantity !== ''
+                        directRaw !== undefined &&
+                        directRaw !== ''
                     ) {
                         const parsed =
-                            Number(
-                                datasetQuantity
-                            );
+                            Number(directRaw);
 
-                        if (
-                            Number.isFinite(
-                                parsed
-                            )
-                        ) {
+                        if (Number.isFinite(parsed)) {
                             quantity = parsed;
                         }
                     }
@@ -3483,44 +3527,23 @@
                                 '.mp-badge-count, [data-qty], [data-quantity]'
                             );
 
-                        if (badge) {
-                            const badgeDatasetQuantity =
-                                badge.dataset?.qty ??
-                                badge.dataset?.quantity;
-
-                            if (
-                                badgeDatasetQuantity !==
-                                    undefined &&
-                                badgeDatasetQuantity !== ''
-                            ) {
-                                const parsed =
-                                    Number(
-                                        badgeDatasetQuantity
-                                    );
-
-                                if (
-                                    Number.isFinite(
-                                        parsed
-                                    )
-                                ) {
-                                    quantity = parsed;
-                                }
-                            }
-
-                            if (quantity === null) {
-                                quantity =
-                                    numberFromText(
-                                        badge.textContent
-                                    );
-                            }
-                        }
+                        quantity =
+                            readQuantity(badge);
                     }
 
                     if (
-                        quantity !== null &&
-                        Number.isFinite(
-                            quantity
-                        )
+                        quantity === null ||
+                        !Number.isFinite(quantity)
+                    ) {
+                        return;
+                    }
+
+                    const existing =
+                        quantities.get(itemId);
+
+                    if (
+                        existing === undefined ||
+                        quantity > existing
                     ) {
                         quantities.set(
                             itemId,
@@ -5099,13 +5122,26 @@
         const inCombat =
             isActuallyInCombat();
 
+        if (inCombat) {
+            lastCombatTime =
+                Date.now();
+        }
+
         const quantities =
             getEquippedConsumables();
+
+        const withinCombatTrackingGrace =
+            lastCombatTime > 0 &&
+            Date.now() - lastCombatTime <=
+                ITEM_TRACKING_COMBAT_GRACE_MS;
 
         if (
             !settings.combatTrackerEnabled
         ) {
-            if (!inCombat) {
+            if (
+                !inCombat &&
+                !withinCombatTrackingGrace
+            ) {
                 refreshItemBaseline(
                     quantities
                 );
@@ -5116,11 +5152,15 @@
         }
 
         /*
-         * Outside combat, keep a clean baseline. Only real values
-         * returned by the combat HUD are stored; missing HUD nodes
-         * are never interpreted as zero inventory.
+         * A shot can cause Tidefall to rerender or briefly hide the
+         * combat HUD. Do not treat that short UI transition as the end
+         * of combat, because doing so can replace the old ammo baseline
+         * with the post-shot quantity before the decrease is charged.
          */
-        if (!inCombat) {
+        if (
+            !inCombat &&
+            !withinCombatTrackingGrace
+        ) {
             refreshItemBaseline(
                 quantities
             );
@@ -5132,11 +5172,8 @@
         /*
          * Auto-start sessions begin when the first victory is found.
          * Track live decreases during that first fight as well, so
-         * its ammo/food/repair usage is already present when the
+         * its ammo, food, and repair usage is already present when the
          * victory starts the visible PvE session.
-         *
-         * If a running session was manually stopped after at least
-         * one kill, do not continue charging costs in the background.
          */
         if (
             !combatRunning &&
@@ -5145,19 +5182,12 @@
             return;
         }
 
-        const consumptionChanged =
+        const changed =
             recordItemConsumption(
                 quantities
             );
 
-        /*
-         * Consumption is scanned more often than the normal display
-         * refresh. Update the PvE totals immediately when ammo, food,
-         * or repair-kit quantity drops so Net Gold and the cost window
-         * do not appear to update at random points in the 1-second
-         * display interval.
-         */
-        if (consumptionChanged) {
+        if (changed) {
             updateCombatDisplay();
         }
     }
@@ -11608,6 +11638,91 @@
             childList: true,
             subtree: true,
             characterData: true
+        }
+    );
+
+    let combatItemObserverTimer =
+        null;
+
+    const combatItemObserver =
+        new MutationObserver(
+            mutations => {
+                const relevant =
+                    mutations.some(
+                        mutation => {
+                            const target =
+                                mutation.target;
+
+                            if (
+                                target?.nodeType === 1 &&
+                                target.closest?.(
+                                    '#combat-ammo-hud-munitions'
+                                )
+                            ) {
+                                return true;
+                            }
+
+                            const parent =
+                                target?.parentElement;
+
+                            if (
+                                parent?.closest?.(
+                                    '#combat-ammo-hud-munitions'
+                                )
+                            ) {
+                                return true;
+                            }
+
+                            return Array.from(
+                                mutation.addedNodes || []
+                            ).some(
+                                node =>
+                                    node?.nodeType === 1 &&
+                                    (
+                                        node.matches?.(
+                                            '#combat-ammo-hud-munitions'
+                                        ) ||
+                                        node.querySelector?.(
+                                            '#combat-ammo-hud-munitions'
+                                        )
+                                    )
+                            );
+                        }
+                    );
+
+                if (
+                    !relevant ||
+                    combatItemObserverTimer !== null
+                ) {
+                    return;
+                }
+
+                combatItemObserverTimer =
+                    window.setTimeout(
+                        () => {
+                            combatItemObserverTimer = null;
+                            scanItemConsumption();
+                        },
+                        25
+                    );
+            }
+        );
+
+    combatItemObserver.observe(
+        document.body,
+        {
+            childList: true,
+            subtree: true,
+            characterData: true,
+            attributes: true,
+            attributeFilter: [
+                'data-qty',
+                'data-quantity',
+                'data-item-id',
+                'data-item-type',
+                'class',
+                'hidden'
+            ]
         }
     );
 
