@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.8.3
+// @version      1.8.4
 // @description  Combat tracker, combat warnings, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -24,8 +24,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.8.3';
-    const FIRST_MATE_BUILD_ID = '2026-08-07-official';
+    const FIRST_MATE_VERSION = '1.8.4';
+    const FIRST_MATE_BUILD_ID = '2026-08-08-ammo-live-total';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -5018,6 +5018,8 @@
     function recordItemConsumption(
         quantities
     ) {
+        let consumptionChanged = false;
+
         quantities.forEach(
             (quantity, itemId) => {
                 if (
@@ -5050,6 +5052,8 @@
                             ) || 0
                         ) + decrease
                     );
+
+                    consumptionChanged = true;
 
                     const price =
                         getCachedPrice(
@@ -5087,6 +5091,8 @@
                 );
             }
         );
+
+        return consumptionChanged;
     }
 
     function scanItemConsumption() {
@@ -5139,9 +5145,21 @@
             return;
         }
 
-        recordItemConsumption(
-            quantities
-        );
+        const consumptionChanged =
+            recordItemConsumption(
+                quantities
+            );
+
+        /*
+         * Consumption is scanned more often than the normal display
+         * refresh. Update the PvE totals immediately when ammo, food,
+         * or repair-kit quantity drops so Net Gold and the cost window
+         * do not appear to update at random points in the 1-second
+         * display interval.
+         */
+        if (consumptionChanged) {
+            updateCombatDisplay();
+        }
     }
 
     function getConsumedCostForIds(
