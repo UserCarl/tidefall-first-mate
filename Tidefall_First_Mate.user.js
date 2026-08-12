@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.9.2
+// @version      1.9.3
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history, and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -25,21 +25,14 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.9.2';
-    const FIRST_MATE_BUILD_ID = '2026-08-12-official-level-eta-modifiers';
+    const FIRST_MATE_VERSION = '1.9.3';
+    const FIRST_MATE_BUILD_ID = '2026-08-12-remove-theoretical-volley';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
     const DEFAULT_SETTINGS = {
         combatTrackerEnabled: true,
         combatDamageTrackerEnabled: true,
-        theoreticalDamageEnabled: true,
-        theoreticalAmmoFamily: 'auto',
-        theoreticalOperationalCannons: 0,
-        theoreticalAverageCannonDamage: 0,
-        theoreticalHullFlatPerShot: 0,
-        theoreticalCrewFlatPerShot: 0,
-        theoreticalRiggingFlatPerShot: 0,
         consumableCostsEnabled: true,
         combatWarningsEnabled: true,
 
@@ -2939,20 +2932,9 @@
                 <strong id="tf-damage-accuracy">—</strong>
             </div>
 
-            <div id="tf-theoretical-damage-section">
-                <div class="tf-damage-section-title">Theoretical Volley</div>
-                <div class="tf-cost-row"><span>Ammo Family</span><strong id="tf-theoretical-ammo">—</strong></div>
-                <div class="tf-cost-row"><span>Shots Fired</span><strong id="tf-theoretical-shots">—</strong></div>
-                <div class="tf-cost-row"><span>Min Hit</span><strong id="tf-theoretical-min">—</strong></div>
-                <div class="tf-cost-row"><span>Avg Hit</span><strong id="tf-theoretical-average">—</strong></div>
-                <div class="tf-cost-row"><span>Max Crit</span><strong id="tf-theoretical-max">—</strong></div>
-                <div class="tf-cost-row"><span>Expected / Volley</span><strong id="tf-theoretical-volley">—</strong></div>
-                <div class="tf-cost-row tf-total"><span>Expected DPS</span><strong id="tf-theoretical-dps">—</strong></div>
-                <div class="tf-cost-row"><span>Hull / Crew / Rigging</span><strong id="tf-theoretical-channels">—</strong></div>
-            </div>
 
             <div class="tf-damage-note">
-                Observed damage uses Tidefall's outgoing combat rows. Theoretical damage uses the naval combat formula: 10% miss, 0.90–1.10 variance, 10% crit at 1.5×, and the 0.35 combat scaler. Configure cannon and ammo stats in First Mate Settings.
+                Damage is measured from Tidefall's outgoing combat events for the current combat session.
             </div>
         </div>
     `;
@@ -3096,15 +3078,7 @@
     const damageAccuracyElement =
         damageWindow.querySelector('#tf-damage-accuracy');
 
-    const theoreticalDamageSection = damageWindow.querySelector('#tf-theoretical-damage-section');
-    const theoreticalAmmoElement = damageWindow.querySelector('#tf-theoretical-ammo');
-    const theoreticalShotsElement = damageWindow.querySelector('#tf-theoretical-shots');
-    const theoreticalMinElement = damageWindow.querySelector('#tf-theoretical-min');
-    const theoreticalAverageElement = damageWindow.querySelector('#tf-theoretical-average');
-    const theoreticalMaxElement = damageWindow.querySelector('#tf-theoretical-max');
-    const theoreticalVolleyElement = damageWindow.querySelector('#tf-theoretical-volley');
-    const theoreticalDpsElement = damageWindow.querySelector('#tf-theoretical-dps');
-    const theoreticalChannelsElement = damageWindow.querySelector('#tf-theoretical-channels');
+
 
     const startStopButton =
         combatPanel.querySelector(
@@ -6922,171 +6896,12 @@
         return bestName;
     }
 
-    const THEORETICAL_AMMO_ROUTING = {
-        round: { label: 'Round Shot', hull: 1.00, crew: 0.10, rigging: 0.00 },
-        grape: { label: 'Grape Shot', hull: 0.00, crew: 0.18, rigging: 0.15 },
-        chain: { label: 'Chain Shot', hull: 0.15, crew: 0.00, rigging: 0.45 }
-    };
-
-    function getTheoreticalAmmoFamily() {
-        const configured = String(settings.theoreticalAmmoFamily || 'auto').toLowerCase();
-        if (configured !== 'auto' && THEORETICAL_AMMO_ROUTING[configured]) {
-            return configured;
-        }
-
-        const ammoName = getCurrentCombatAmmoName().toLowerCase();
-        if (ammoName.includes('grape')) return 'grape';
-        if (ammoName.includes('chain')) return 'chain';
-        if (ammoName.includes('round')) return 'round';
-        return null;
-    }
-
-    function theoreticalVolleyAt(variance, critMult) {
-        const family = getTheoreticalAmmoFamily();
-        const routing = family ? THEORETICAL_AMMO_ROUTING[family] : null;
-        const shots = Math.max(0, Number(settings.theoreticalOperationalCannons) || 0);
-        const cannonDamage = Math.max(0, Number(settings.theoreticalAverageCannonDamage) || 0);
-        if (!routing || shots <= 0 || cannonDamage <= 0) return null;
-
-        const hullFlat = Math.max(0, Number(settings.theoreticalHullFlatPerShot) || 0);
-        const crewFlat = Math.max(0, Number(settings.theoreticalCrewFlatPerShot) || 0);
-        const riggingFlat = Math.max(0, Number(settings.theoreticalRiggingFlatPerShot) || 0);
-
-        const cannonPool = shots * cannonDamage * 0.35 * variance * critMult;
-        let hull = Math.floor(cannonPool * routing.hull) +
-            Math.floor(hullFlat * shots * variance * critMult);
-        const crew = Math.floor(cannonPool * routing.crew) +
-            Math.floor(crewFlat * shots * variance * critMult);
-        const rigging = Math.floor(cannonPool * routing.rigging) +
-            Math.floor(riggingFlat * shots * variance * critMult);
-
-        if ((family === 'round' || family === 'chain' || hullFlat > 0) && hull < 1) {
-            hull = 1;
-        }
-
-        return {
-            family,
-            shots,
-            hull,
-            crew,
-            rigging,
-            total: hull + crew + rigging
-        };
-    }
-
-    function getTheoreticalDamageSummary() {
-        if (!settings.theoreticalDamageEnabled) return null;
-
-        const min = theoreticalVolleyAt(0.90, 1.0);
-        const max = theoreticalVolleyAt(1.10, 1.5);
-        if (!min || !max) return null;
-
-        const sampleCount = 401;
-        let hullExpectedHit = 0;
-        let crewExpectedHit = 0;
-        let riggingExpectedHit = 0;
-        let totalExpectedHit = 0;
-
-        for (let i = 0; i < sampleCount; i += 1) {
-            const variance = 0.90 + (0.20 * i / (sampleCount - 1));
-            const normal = theoreticalVolleyAt(variance, 1.0);
-            const crit = theoreticalVolleyAt(variance, 1.5);
-            if (!normal || !crit) return null;
-
-            hullExpectedHit += normal.hull * 0.90 + crit.hull * 0.10;
-            crewExpectedHit += normal.crew * 0.90 + crit.crew * 0.10;
-            riggingExpectedHit += normal.rigging * 0.90 + crit.rigging * 0.10;
-            totalExpectedHit += normal.total * 0.90 + crit.total * 0.10;
-        }
-
-        hullExpectedHit /= sampleCount;
-        crewExpectedHit /= sampleCount;
-        riggingExpectedHit /= sampleCount;
-        totalExpectedHit /= sampleCount;
-
-        const expectedVolley = totalExpectedHit * 0.90;
-        const attempts = combatDamageHits + combatDamageMisses;
-        let expectedDps = NaN;
-
-        if (
-            attempts > 1 &&
-            combatDamageFirstEventAt > 0 &&
-            combatDamageLastEventAt > combatDamageFirstEventAt
-        ) {
-            const intervalSeconds =
-                ((combatDamageLastEventAt - combatDamageFirstEventAt) / 1000) /
-                (attempts - 1);
-            if (intervalSeconds > 0) expectedDps = expectedVolley / intervalSeconds;
-        }
-
-        return {
-            family: min.family,
-            shots: min.shots,
-            min,
-            max,
-            expectedHit: totalExpectedHit,
-            expectedVolley,
-            expectedDps,
-            expectedChannels: {
-                hull: hullExpectedHit,
-                crew: crewExpectedHit,
-                rigging: riggingExpectedHit
-            }
-        };
-    }
-
     function updateDamageWindowDisplay() {
         if (!damageWindow) return;
 
         const dps = getCombatDps();
         const average = getCombatAverageHit();
         const accuracy = getCombatAccuracy();
-        const theoretical = getTheoreticalDamageSummary();
-
-        setDisplayIfChanged(
-            theoreticalDamageSection,
-            settings.theoreticalDamageEnabled ? '' : 'none'
-        );
-
-        if (settings.theoreticalDamageEnabled) {
-            const family = getTheoreticalAmmoFamily();
-            setTextIfChanged(
-                theoreticalAmmoElement,
-                family ? THEORETICAL_AMMO_ROUTING[family].label : '—'
-            );
-            setTextIfChanged(
-                theoreticalShotsElement,
-                theoretical ? theoretical.shots.toLocaleString() : '—'
-            );
-            setTextIfChanged(
-                theoreticalMinElement,
-                theoretical ? Math.round(theoretical.min.total).toLocaleString() : '—'
-            );
-            setTextIfChanged(
-                theoreticalAverageElement,
-                theoretical ? Math.round(theoretical.expectedHit).toLocaleString() : '—'
-            );
-            setTextIfChanged(
-                theoreticalMaxElement,
-                theoretical ? Math.round(theoretical.max.total).toLocaleString() : '—'
-            );
-            setTextIfChanged(
-                theoreticalVolleyElement,
-                theoretical ? Math.round(theoretical.expectedVolley).toLocaleString() : '—'
-            );
-            setTextIfChanged(
-                theoreticalDpsElement,
-                theoretical && Number.isFinite(theoretical.expectedDps)
-                    ? formatRate(theoretical.expectedDps)
-                    : '—'
-            );
-            setTextIfChanged(
-                theoreticalChannelsElement,
-                theoretical
-                    ? `${Math.round(theoretical.expectedChannels.hull)} / ${Math.round(theoretical.expectedChannels.crew)} / ${Math.round(theoretical.expectedChannels.rigging)}`
-                    : '—'
-            );
-        }
 
         setTextIfChanged(
             damageDpsElement,
@@ -13165,35 +12980,6 @@
     }
 
 
-    function createDecimalInput(settingKey, min, max, step, unit) {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'tf-firstmate-number-wrap';
-
-        const input = document.createElement('input');
-        input.type = 'number';
-        input.min = String(min);
-        input.max = String(max);
-        input.step = String(step);
-        input.className = 'tf-firstmate-number';
-        input.dataset.setting = settingKey;
-        input.value = settings[settingKey];
-
-        input.addEventListener('change', () => {
-            let value = Number(input.value);
-            if (!Number.isFinite(value)) value = DEFAULT_SETTINGS[settingKey];
-            value = Math.max(min, Math.min(max, value));
-            updateSetting(settingKey, value);
-            updateDamageWindowDisplay();
-        });
-
-        const unitElement = document.createElement('span');
-        unitElement.className = 'tf-firstmate-unit';
-        unitElement.textContent = unit;
-        wrapper.append(input, unitElement);
-        return wrapper;
-    }
-
-
     function createSelect(
         settingKey,
         options
@@ -13250,10 +13036,6 @@
                 );
 
                 updateActivityDisplay();
-
-                if (settingKey === 'theoreticalAmmoFamily') {
-                    updateDamageWindowDisplay();
-                }
 
                 if (
                     settingKey ===
@@ -13863,104 +13645,10 @@
                     'Combat Damage Tracker',
 
                 description:
-                    'Show observed DPS plus theoretical min, average, max-crit, expected volley damage, and hull/crew/rigging split using Tidefall\'s naval combat formula.',
+                    'Track observed DPS, average hit, minimum and maximum hit, total damage, hits, misses, and accuracy from Tidefall combat events.',
 
                 toggleKey:
-                    'combatDamageTrackerEnabled',
-
-                extraContent:
-                    cardBody => {
-                        const theoreticalRow = document.createElement('div');
-                        theoreticalRow.className = 'tf-firstmate-toggle-row';
-                        theoreticalRow.dataset.parentToggle = 'combatDamageTrackerEnabled';
-
-                        const theoreticalLabel = document.createElement('span');
-                        theoreticalLabel.className = 'tf-firstmate-setting-label';
-                        theoreticalLabel.textContent = 'Theoretical Damage';
-
-                        theoreticalRow.append(
-                            theoreticalLabel,
-                            createToggle('theoreticalDamageEnabled')
-                        );
-                        cardBody.appendChild(theoreticalRow);
-
-                        const addSettingRow = (labelText, control) => {
-                            const row = document.createElement('div');
-                            row.className = 'tf-firstmate-select-row';
-                            row.dataset.parentToggle = 'combatDamageTrackerEnabled';
-
-                            const label = document.createElement('span');
-                            label.className = 'tf-firstmate-setting-label';
-                            label.textContent = labelText;
-
-                            row.append(label, control);
-                            cardBody.appendChild(row);
-                        };
-
-                        addSettingRow(
-                            'Ammo Family',
-                            createSelect('theoreticalAmmoFamily', [
-                                { value: 'auto', label: 'Auto' },
-                                { value: 'round', label: 'Round Shot' },
-                                { value: 'grape', label: 'Grape Shot' },
-                                { value: 'chain', label: 'Chain Shot' }
-                            ])
-                        );
-
-                        addSettingRow(
-                            'Operational Cannons',
-                            createNumberInput(
-                                'theoreticalOperationalCannons',
-                                0,
-                                100,
-                                'shots'
-                            )
-                        );
-
-                        addSettingRow(
-                            'Average Cannon Damage',
-                            createDecimalInput(
-                                'theoreticalAverageCannonDamage',
-                                0,
-                                100000,
-                                0.1,
-                                'dmg'
-                            )
-                        );
-
-                        addSettingRow(
-                            'Hull Flat / Shot',
-                            createDecimalInput(
-                                'theoreticalHullFlatPerShot',
-                                0,
-                                100000,
-                                0.1,
-                                'dmg'
-                            )
-                        );
-
-                        addSettingRow(
-                            'Crew Flat / Shot',
-                            createDecimalInput(
-                                'theoreticalCrewFlatPerShot',
-                                0,
-                                100000,
-                                0.1,
-                                'dmg'
-                            )
-                        );
-
-                        addSettingRow(
-                            'Rigging Flat / Shot',
-                            createDecimalInput(
-                                'theoreticalRiggingFlatPerShot',
-                                0,
-                                100000,
-                                0.1,
-                                'dmg'
-                            )
-                        );
-                    }
+                    'combatDamageTrackerEnabled'
             })
         );
 
