@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.8.6.1
-// @description  Combat tracker, combat warnings, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
+// @version      1.9.0
+// @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history, and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
 // @grant        none
@@ -20,17 +20,19 @@
     const QUARTERMASTER_STORAGE_KEY = 'tf-quartermaster-v1';
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
+    const COMBAT_HISTORY_KEY = 'tf-combat-session-history-v1';
     const QUEUE_DEBUG_POSITION_KEY = 'tf-queue-debug-position-v1';
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.8.6.1';
-    const FIRST_MATE_BUILD_ID = '2026-08-12-performance-fix';
+    const FIRST_MATE_VERSION = '1.9.0';
+    const FIRST_MATE_BUILD_ID = '2026-08-12-official-dps-combat-row-events';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
     const DEFAULT_SETTINGS = {
         combatTrackerEnabled: true,
+        combatDamageTrackerEnabled: true,
         consumableCostsEnabled: true,
         combatWarningsEnabled: true,
 
@@ -58,6 +60,11 @@
         combatSessionLayout: 'header',
         pveTrackerHideDelaySeconds: 30,
         activityQueueRemaining: true,
+        queueCompletionDetailsEnabled: true,
+        actualVsTheoreticalXPEnabled: true,
+        rollingXPRatesEnabled: true,
+        queueFinishedNotificationEnabled: false,
+        combatSessionHistoryEnabled: true,
         queueDebuggerEnabled: false,
 
         skillProgressPercentEnabled: false,
@@ -90,6 +97,8 @@
     }
 
     let settings = loadSettings();
+    let combatDamageTrackerLastEnabled =
+        Boolean(settings.combatDamageTrackerEnabled);
 
     function saveSettings() {
         try {
@@ -245,6 +254,51 @@
         }
 
         return record;
+    }
+
+    // =========================================================
+    // COMBAT SESSION HISTORY
+    // =========================================================
+
+    const COMBAT_HISTORY_MAX = 20;
+
+    let combatSessionHistory = [];
+
+    try {
+        const savedHistory = JSON.parse(
+            localStorage.getItem(
+                COMBAT_HISTORY_KEY
+            ) || '[]'
+        );
+
+        if (Array.isArray(savedHistory)) {
+            combatSessionHistory =
+                savedHistory.slice(
+                    0,
+                    COMBAT_HISTORY_MAX
+                );
+        }
+    } catch {
+        combatSessionHistory = [];
+    }
+
+    function saveCombatSessionHistory() {
+        try {
+            localStorage.setItem(
+                COMBAT_HISTORY_KEY,
+                JSON.stringify(
+                    combatSessionHistory.slice(
+                        0,
+                        COMBAT_HISTORY_MAX
+                    )
+                )
+            );
+        } catch (error) {
+            console.warn(
+                '[FirstMate Tools] Could not save combat history:',
+                error
+            );
+        }
     }
 
     // =========================================================
@@ -704,6 +758,72 @@
         );
     }
 
+    function formatQueueFinishClock(seconds) {
+        if (!Number.isFinite(seconds) || seconds < 0) {
+            return '—';
+        }
+
+        return new Date(
+            Date.now() + seconds * 1000
+        ).toLocaleTimeString(
+            [],
+            {
+                hour: 'numeric',
+                minute: '2-digit'
+            }
+        );
+    }
+
+    function formatCompletionTimeAt(timestamp) {
+        const target = new Date(timestamp);
+
+        if (!Number.isFinite(target.getTime())) {
+            return '—';
+        }
+
+        const now = new Date();
+        const todayStart = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate()
+        ).getTime();
+        const targetStart = new Date(
+            target.getFullYear(),
+            target.getMonth(),
+            target.getDate()
+        ).getTime();
+        const dayOffset = Math.round(
+            (targetStart - todayStart) /
+            86400000
+        );
+        const clock = target.toLocaleTimeString(
+            [],
+            {
+                hour: 'numeric',
+                minute: '2-digit'
+            }
+        );
+
+        if (dayOffset === 0) {
+            return clock;
+        }
+
+        if (dayOffset === 1) {
+            return `Tomorrow ${clock}`;
+        }
+
+        return `${target.toLocaleDateString([], {
+            month: 'short',
+            day: 'numeric'
+        })} ${clock}`;
+    }
+
+    function formatRate(value) {
+        return Number.isFinite(value) && value >= 0
+            ? Math.round(value).toLocaleString()
+            : '—';
+    }
+
     function titleCaseSkill(skill) {
         if (!skill) {
             return 'Activity';
@@ -798,6 +918,7 @@
     const FIRST_MATE_OWNED_SELECTOR = [
         '#tf-pve-panel',
         '#tf-cost-window',
+        '#tf-damage-window',
         '#tf-activity-panel',
         '#tf-queue-debug',
         '#tf-idle-warning',
@@ -1273,6 +1394,29 @@
 
         #tf-cost-window-body {
             padding: 12px 16px 16px;
+        }
+
+        #tf-damage-window {
+            top: 130px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 320px;
+            display: none;
+        }
+
+        #tf-damage-window.tf-open {
+            display: block;
+        }
+
+        #tf-damage-window-body {
+            padding: 12px 16px 16px;
+        }
+
+        #tf-damage-window .tf-damage-note {
+            margin-top: 8px;
+            color: var(--text-secondary, #d4be8ca6);
+            font-size: 10px;
+            line-height: 1.35;
         }
 
         .tf-cost-row {
@@ -1956,6 +2100,182 @@
             font-size: 10px;
         }
 
+        .tf-activity-header-stat[data-kind="queue"],
+        .tf-activity-header-stat[data-kind="xp"] {
+            position: relative;
+            pointer-events: auto;
+        }
+
+        .tf-header-hover-tooltip {
+            position: fixed;
+            top: 0;
+            left: 0;
+            transform: none;
+            z-index: 10000020;
+            display: none;
+            min-width: 290px;
+            max-width: min(440px, 80vw);
+            padding: 10px 12px;
+            color: var(--text-primary, #e8e0d0);
+            background: rgba(5, 7, 10, .98);
+            border: 1px solid rgba(197, 160, 89, .72);
+            border-radius: 6px;
+            box-shadow: 0 7px 24px rgba(0, 0, 0, .65);
+            font-size: 11px;
+            line-height: 1.35;
+            white-space: normal;
+            pointer-events: none;
+        }
+
+        .tf-header-hover-tooltip.tf-open {
+            display: block;
+        }
+
+        .tf-header-tooltip-title {
+            margin-bottom: 7px;
+            color: var(--gold, #c5a059);
+            font-family: var(--font-heading, Georgia, serif);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+        }
+
+        .tf-header-tooltip-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 14px;
+            align-items: baseline;
+            padding: 3px 0;
+            border-bottom: 1px solid rgba(197, 160, 89, .10);
+        }
+
+        .tf-header-tooltip-row:last-child {
+            border-bottom: 0;
+        }
+
+        .tf-header-tooltip-row span {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: var(--text-secondary, #d4be8ca6);
+        }
+
+        .tf-header-tooltip-row strong {
+            color: var(--text-primary, #e8e0d0);
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .tf-header-tooltip-subtitle {
+            margin: 7px 0 3px;
+            color: var(--text-secondary, #d4be8ca6);
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+        }
+
+        #tf-combat-history-window {
+            top: 110px;
+            left: 80px;
+            width: 560px;
+            max-width: calc(100vw - 24px);
+            display: none;
+            z-index: 10000000;
+        }
+
+        #tf-combat-history-window.tf-open {
+            display: block;
+        }
+
+        #tf-combat-history-body {
+            max-height: 480px;
+            overflow: auto;
+            padding: 10px 12px 12px;
+        }
+
+        .tf-combat-history-empty {
+            padding: 18px 8px;
+            color: var(--text-muted, #ffffff4d);
+            text-align: center;
+        }
+
+        .tf-combat-history-entry {
+            padding: 9px 0;
+            border-bottom: 1px solid rgba(197, 160, 89, .16);
+        }
+
+        .tf-combat-history-entry:last-child {
+            border-bottom: 0;
+        }
+
+        .tf-combat-history-time {
+            margin-bottom: 5px;
+            color: var(--gold, #c5a059);
+            font-size: 10px;
+            font-weight: 700;
+        }
+
+        .tf-combat-history-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 5px 12px;
+            font-size: 11px;
+        }
+
+        .tf-combat-history-grid div {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .tf-combat-history-grid span {
+            color: var(--text-secondary, #d4be8ca6);
+        }
+
+        .tf-combat-history-grid strong {
+            color: var(--text-primary, #e8e0d0);
+            white-space: nowrap;
+        }
+
+        #tf-combat-history-clear {
+            width: auto;
+            min-width: 48px;
+            padding: 0 9px;
+            border-radius: 13px;
+            font-size: 10px;
+        }
+
+        #tf-queue-finished-warning {
+            position: fixed;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10000030;
+            display: none;
+            min-width: 360px;
+            max-width: 80vw;
+            padding: 14px 28px;
+            text-align: center;
+            font-family: var(--font-heading);
+            font-size: var(--font-size-2xl);
+            font-weight: 900;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: #ff3b30;
+            background: rgba(5, 7, 10, .94);
+            border: 3px solid #ff3b30;
+            border-radius: var(--radius-md);
+            box-shadow: 0 0 28px rgba(255, 59, 48, .35);
+            pointer-events: auto;
+            cursor: pointer;
+        }
+
+        #tf-queue-finished-warning.tf-open {
+            display: block;
+        }
+
         #tf-queue-debug {
             position: fixed;
             left: 12px;
@@ -2094,8 +2414,17 @@
             color: var(--reward-gold, #f0c45c);
         }
 
+        .tf-combat-header-stat[data-kind="dps"] .tf-combat-header-value {
+            color: var(--text-danger, #e86b60);
+        }
 
-        .tf-combat-header-stat[data-kind="gold"] {
+        .tf-combat-header-stat[data-kind="gold"],
+        .tf-combat-header-stat[data-kind="dps"] {
+            pointer-events: auto;
+            cursor: pointer;
+        }
+
+        .tf-combat-header-title.tf-history-enabled {
             pointer-events: auto;
             cursor: pointer;
         }
@@ -2399,6 +2728,14 @@
                     RESET
                 </button>
 
+                <button
+                    id="tf-combat-history"
+                    class="tf-reset-button"
+                    type="button"
+                >
+                    HISTORY
+                </button>
+
             </div>
 
             <div id="tf-status">
@@ -2518,6 +2855,152 @@
         costWindow
     );
 
+    const damageWindow =
+        document.createElement('div');
+
+    damageWindow.id =
+        'tf-damage-window';
+
+    damageWindow.className =
+        'tf-session-panel';
+
+    damageWindow.innerHTML = `
+        <div
+            id="tf-damage-window-header"
+            class="tf-session-header"
+        >
+            <div class="tf-session-title">
+                Damage Breakdown
+            </div>
+
+            <button
+                id="tf-damage-window-close"
+                class="tf-window-btn"
+                type="button"
+                title="Close"
+            >
+                ×
+            </button>
+        </div>
+
+        <div id="tf-damage-window-body">
+            <div class="tf-cost-row tf-total">
+                <span>DPS</span>
+                <strong id="tf-damage-dps">—</strong>
+            </div>
+            <div class="tf-cost-row">
+                <span>Average Hit</span>
+                <strong id="tf-damage-average">—</strong>
+            </div>
+            <div class="tf-cost-row">
+                <span>Minimum Hit</span>
+                <strong id="tf-damage-min">—</strong>
+            </div>
+            <div class="tf-cost-row">
+                <span>Maximum Hit</span>
+                <strong id="tf-damage-max">—</strong>
+            </div>
+            <div class="tf-cost-row">
+                <span>Total Damage</span>
+                <strong id="tf-damage-total">0</strong>
+            </div>
+            <div class="tf-cost-row">
+                <span>Ammo</span>
+                <strong id="tf-damage-ammo">—</strong>
+            </div>
+            <div class="tf-cost-row">
+                <span>Hits</span>
+                <strong id="tf-damage-hits">0</strong>
+            </div>
+            <div class="tf-cost-row">
+                <span>Misses</span>
+                <strong id="tf-damage-misses">0</strong>
+            </div>
+            <div class="tf-cost-row">
+                <span>Accuracy</span>
+                <strong id="tf-damage-accuracy">—</strong>
+            </div>
+            <div class="tf-damage-note">
+                Observed damage from Tidefall's outgoing combat rows. DPS uses combat event timestamps and only counts combat-row--outgoing-hit / combat-row--miss events.
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(
+        damageWindow
+    );
+
+    const combatHistoryWindow =
+        document.createElement('div');
+
+    combatHistoryWindow.id =
+        'tf-combat-history-window';
+
+    combatHistoryWindow.className =
+        'tf-session-panel';
+
+    combatHistoryWindow.innerHTML = `
+        <div
+            id="tf-combat-history-header"
+            class="tf-session-header"
+        >
+            <div class="tf-session-title">
+                Combat Session History
+            </div>
+
+            <button
+                id="tf-combat-history-clear"
+                class="tf-window-btn"
+                type="button"
+                title="Clear history"
+            >
+                Clear
+            </button>
+
+            <button
+                id="tf-combat-history-close"
+                class="tf-window-btn"
+                type="button"
+                title="Close"
+            >
+                ×
+            </button>
+        </div>
+
+        <div id="tf-combat-history-body"></div>
+    `;
+
+    document.body.appendChild(
+        combatHistoryWindow
+    );
+
+    const queueFinishedToast =
+        document.createElement('div');
+
+    queueFinishedToast.id =
+        'tf-queue-finished-warning';
+
+    queueFinishedToast.title =
+        'Click to dismiss';
+
+    queueFinishedToast.innerHTML = `
+        <div class="tf-community-warning-brand">
+            ⚓ Tidefall First Mate - Community Addon
+        </div>
+
+        <div class="tf-community-warning-title">
+            Queue Finished
+        </div>
+
+        <div class="tf-community-warning-message">
+            Activity queue finished.
+        </div>
+    `;
+
+    document.body.appendChild(
+        queueFinishedToast
+    );
+
     const costWindowHeader =
         costWindow.querySelector(
             '#tf-cost-window-header'
@@ -2553,6 +3036,35 @@
             '#tf-cost-net'
         );
 
+    const damageWindowHeader =
+        damageWindow.querySelector(
+            '#tf-damage-window-header'
+        );
+
+    const damageWindowClose =
+        damageWindow.querySelector(
+            '#tf-damage-window-close'
+        );
+
+    const damageDpsElement =
+        damageWindow.querySelector('#tf-damage-dps');
+    const damageAverageElement =
+        damageWindow.querySelector('#tf-damage-average');
+    const damageMinElement =
+        damageWindow.querySelector('#tf-damage-min');
+    const damageMaxElement =
+        damageWindow.querySelector('#tf-damage-max');
+    const damageTotalElement =
+        damageWindow.querySelector('#tf-damage-total');
+    const damageAmmoElement =
+        damageWindow.querySelector('#tf-damage-ammo');
+    const damageHitsElement =
+        damageWindow.querySelector('#tf-damage-hits');
+    const damageMissesElement =
+        damageWindow.querySelector('#tf-damage-misses');
+    const damageAccuracyElement =
+        damageWindow.querySelector('#tf-damage-accuracy');
+
     const startStopButton =
         combatPanel.querySelector(
             '#tf-start-stop'
@@ -2561,6 +3073,31 @@
     const combatResetButton =
         combatPanel.querySelector(
             '#tf-reset'
+        );
+
+    const combatHistoryButton =
+        combatPanel.querySelector(
+            '#tf-combat-history'
+        );
+
+    const combatHistoryHeader =
+        combatHistoryWindow.querySelector(
+            '#tf-combat-history-header'
+        );
+
+    const combatHistoryBody =
+        combatHistoryWindow.querySelector(
+            '#tf-combat-history-body'
+        );
+
+    const combatHistoryClearButton =
+        combatHistoryWindow.querySelector(
+            '#tf-combat-history-clear'
+        );
+
+    const combatHistoryCloseButton =
+        combatHistoryWindow.querySelector(
+            '#tf-combat-history-close'
         );
 
     const combatMinimizeButton =
@@ -2625,7 +3162,10 @@
         >
 
             <div class="tf-stat-row">
-                <span class="tf-stat-label">
+                <span
+                    id="tf-activity-xp-hour-label"
+                    class="tf-stat-label"
+                >
                     XP / Hour
                 </span>
 
@@ -2635,6 +3175,51 @@
                 >
                     —
                 </span>
+            </div>
+
+            <div
+                id="tf-activity-actual-xp-row"
+                class="tf-stat-row"
+                style="display: none;"
+            >
+                <span class="tf-stat-label">Actual XP / Hour</span>
+                <span id="tf-activity-actual-xp-hour" class="tf-stat-value">—</span>
+            </div>
+
+            <div
+                id="tf-activity-xp-efficiency-row"
+                class="tf-stat-row"
+                style="display: none;"
+            >
+                <span class="tf-stat-label">XP Efficiency</span>
+                <span id="tf-activity-xp-efficiency" class="tf-stat-value">—</span>
+            </div>
+
+            <div
+                id="tf-activity-rolling-5m-row"
+                class="tf-stat-row"
+                style="display: none;"
+            >
+                <span class="tf-stat-label">Rolling XP / Hour 5m</span>
+                <span id="tf-activity-rolling-5m" class="tf-stat-value">—</span>
+            </div>
+
+            <div
+                id="tf-activity-rolling-15m-row"
+                class="tf-stat-row"
+                style="display: none;"
+            >
+                <span class="tf-stat-label">Rolling XP / Hour 15m</span>
+                <span id="tf-activity-rolling-15m" class="tf-stat-value">—</span>
+            </div>
+
+            <div
+                id="tf-activity-rolling-1h-row"
+                class="tf-stat-row"
+                style="display: none;"
+            >
+                <span class="tf-stat-label">Rolling XP / Hour 1h</span>
+                <span id="tf-activity-rolling-1h" class="tf-stat-value">—</span>
             </div>
 
             <div class="tf-stat-row">
@@ -2918,6 +3503,61 @@
             '#tf-activity-xp-hour'
         );
 
+    const activityXpHourLabel =
+        activityPanel.querySelector(
+            '#tf-activity-xp-hour-label'
+        );
+
+    const activityActualXpRow =
+        activityPanel.querySelector(
+            '#tf-activity-actual-xp-row'
+        );
+
+    const activityActualXpHourElement =
+        activityPanel.querySelector(
+            '#tf-activity-actual-xp-hour'
+        );
+
+    const activityXpEfficiencyRow =
+        activityPanel.querySelector(
+            '#tf-activity-xp-efficiency-row'
+        );
+
+    const activityXpEfficiencyElement =
+        activityPanel.querySelector(
+            '#tf-activity-xp-efficiency'
+        );
+
+    const activityRolling5mRow =
+        activityPanel.querySelector(
+            '#tf-activity-rolling-5m-row'
+        );
+
+    const activityRolling5mElement =
+        activityPanel.querySelector(
+            '#tf-activity-rolling-5m'
+        );
+
+    const activityRolling15mRow =
+        activityPanel.querySelector(
+            '#tf-activity-rolling-15m-row'
+        );
+
+    const activityRolling15mElement =
+        activityPanel.querySelector(
+            '#tf-activity-rolling-15m'
+        );
+
+    const activityRolling1hRow =
+        activityPanel.querySelector(
+            '#tf-activity-rolling-1h-row'
+        );
+
+    const activityRolling1hElement =
+        activityPanel.querySelector(
+            '#tf-activity-rolling-1h'
+        );
+
     const activityItemsHourElement =
         activityPanel.querySelector(
             '#tf-activity-items-hour'
@@ -2968,6 +3608,21 @@
     let combatKills = 0;
     let combatTotalXP = 0;
     let combatGrossGold = 0;
+    let combatSessionStartedAt = 0;
+    let combatHistoryArchivedCurrentSession = false;
+
+    let combatDamageTotal = 0;
+    let combatDamageHits = 0;
+    let combatDamageMisses = 0;
+    let combatDamageMin = Infinity;
+    let combatDamageMax = 0;
+    let combatDamageActiveMs = 0;
+    let combatDamageActiveStartedAt = 0;
+    let combatDamageFirstEventAt = 0;
+    let combatDamageLastEventAt = 0;
+
+    const processedDamageEvents =
+        new Set();
 
     let combatMinimized = false;
 
@@ -3020,6 +3675,663 @@
 
     const sessionPrices =
         new Map();
+
+    function getCombatSessionDurationSeconds() {
+        if (!combatSessionStartedAt) {
+            return 0;
+        }
+
+        const endAt =
+            lastCombatTime > combatSessionStartedAt
+                ? lastCombatTime
+                : Date.now();
+
+        return Math.max(
+            1,
+            (endAt - combatSessionStartedAt) /
+                1000
+        );
+    }
+
+    function resetCombatDamageSession() {
+        combatDamageTotal = 0;
+        combatDamageHits = 0;
+        combatDamageMisses = 0;
+        combatDamageMin = Infinity;
+        combatDamageMax = 0;
+        combatDamageActiveMs = 0;
+        combatDamageActiveStartedAt = 0;
+        combatDamageFirstEventAt = 0;
+        combatDamageLastEventAt = 0;
+        processedDamageEvents.clear();
+        markCurrentDamageEventsProcessed();
+        updateDamageWindowDisplay();
+    }
+
+    function updateCombatDamageClock() {
+        if (!settings.combatDamageTrackerEnabled) {
+            combatDamageActiveStartedAt = 0;
+            return;
+        }
+
+        const now = Date.now();
+        const active =
+            combatRunning &&
+            isActuallyInCombat();
+
+        if (active) {
+            if (!combatDamageActiveStartedAt) {
+                combatDamageActiveStartedAt = now;
+            }
+            return;
+        }
+
+        if (combatDamageActiveStartedAt) {
+            combatDamageActiveMs +=
+                Math.max(0, now - combatDamageActiveStartedAt);
+            combatDamageActiveStartedAt = 0;
+        }
+    }
+
+    function parseCombatEventTimestamp(entry) {
+        const raw = Number(entry?.dataset?.sentAt);
+
+        if (!Number.isFinite(raw) || raw <= 0) {
+            return Date.now();
+        }
+
+        return raw < 1e11
+            ? raw * 1000
+            : raw;
+    }
+
+    function recordCombatDamageEventTime(entry) {
+        const timestamp =
+            parseCombatEventTimestamp(entry);
+
+        if (
+            !combatDamageFirstEventAt ||
+            timestamp < combatDamageFirstEventAt
+        ) {
+            combatDamageFirstEventAt = timestamp;
+        }
+
+        if (
+            !combatDamageLastEventAt ||
+            timestamp > combatDamageLastEventAt
+        ) {
+            combatDamageLastEventAt = timestamp;
+        }
+    }
+
+    function getCombatDamageActiveSeconds() {
+        /* Prefer Tidefall's own combat-event timestamps so DPS is based on
+         * the actual outgoing-hit/miss event spacing instead of First Mate's
+         * scan timing. A one-shot encounter uses a one-second floor. */
+        if (
+            combatDamageFirstEventAt > 0 &&
+            combatDamageLastEventAt > 0
+        ) {
+            return Math.max(
+                1,
+                (
+                    combatDamageLastEventAt -
+                    combatDamageFirstEventAt
+                ) / 1000
+            );
+        }
+
+        let ms = combatDamageActiveMs;
+
+        if (combatDamageActiveStartedAt) {
+            ms += Math.max(
+                0,
+                Date.now() - combatDamageActiveStartedAt
+            );
+        }
+
+        return Math.max(1, ms / 1000);
+    }
+
+    function getCombatDps() {
+        if (
+            combatDamageTotal <= 0 ||
+            combatDamageHits <= 0
+        ) {
+            return 0;
+        }
+
+        return combatDamageTotal /
+            getCombatDamageActiveSeconds();
+    }
+
+    function getCombatAverageHit() {
+        return combatDamageHits > 0
+            ? combatDamageTotal / combatDamageHits
+            : 0;
+    }
+
+    function getCombatAccuracy() {
+        const attempts =
+            combatDamageHits + combatDamageMisses;
+
+        return attempts > 0
+            ? combatDamageHits / attempts * 100
+            : NaN;
+    }
+
+    function markCurrentDamageEventsProcessed() {
+        document.querySelectorAll('[data-sent-at]')
+            .forEach(entry => {
+                const id = entry.dataset.sentAt;
+                if (id) processedDamageEvents.add(id);
+            });
+    }
+
+    function parseOutgoingDamageEvent(entry) {
+        if (!entry) return null;
+
+        /*
+         * Tidefall exposes the event direction/type in the combat-row class.
+         * This is much more reliable than parsing English message wording:
+         *   combat-row--outgoing-hit = damage dealt by the player
+         *   combat-row--miss         = player attack missed
+         *   combat-row--incoming-hit = damage received by the player
+         */
+        if (entry.classList?.contains('combat-row--miss')) {
+            return { type: 'miss', damage: 0 };
+        }
+
+        if (!entry.classList?.contains('combat-row--outgoing-hit')) {
+            return null;
+        }
+
+        const text = String(entry.textContent || '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        /* First prefer explicit damage nodes/attributes if Tidefall exposes
+         * one in this render. Keep the selector intentionally broad because
+         * the row class is already a definitive outgoing-hit signal. */
+        const explicitDamageNodes = [
+            ...entry.querySelectorAll(
+                '[data-damage], .combat-val--damage, [class*="damage"], [class*="Damage"]'
+            )
+        ];
+
+        for (const node of explicitDamageNodes) {
+            const value = numberFromText(
+                node.dataset?.damage ||
+                node.getAttribute?.('data-value') ||
+                node.textContent
+            );
+
+            if (value > 0) {
+                return { type: 'hit', damage: value };
+            }
+        }
+
+        /* Common combat-message forms. Since the row itself proves this is
+         * outgoing damage, these patterns do not need direction words. */
+        const damagePatterns = [
+            /(?:damage|dmg)\D{0,18}([\d,]+(?:\.\d+)?)/i,
+            /([\d,]+(?:\.\d+)?)\s*(?:damage|dmg)\b/i,
+            /(?:hull|crew|rigging)\D{0,18}([\d,]+(?:\.\d+)?)/i,
+            /(?:for|dealt?|deals?|hit(?:s)?(?:\s+for)?)\D{0,18}([\d,]+(?:\.\d+)?)/i
+        ];
+
+        for (const pattern of damagePatterns) {
+            const match = text.match(pattern);
+            if (!match) continue;
+
+            const damage = numberFromText(match[1]);
+            if (damage > 0) {
+                return { type: 'hit', damage };
+            }
+        }
+
+        /* Fallback for Tidefall rows whose visible text is only a numeric
+         * damage value. Avoid blindly using numbers from weapon names such as
+         * "12-Pounder" unless there is only one sensible numeric value in the
+         * row. */
+        const numericCandidates = [];
+
+        entry.querySelectorAll('span, strong, b, em')
+            .forEach(node => {
+                const nodeText = String(node.textContent || '').trim();
+                if (!nodeText) return;
+
+                const matches = nodeText.match(/\b[\d,]+(?:\.\d+)?\b/g) || [];
+                matches.forEach(raw => {
+                    const value = numberFromText(raw);
+                    if (value > 0) numericCandidates.push(value);
+                });
+            });
+
+        const uniqueCandidates = [...new Set(numericCandidates)];
+        if (uniqueCandidates.length === 1) {
+            return {
+                type: 'hit',
+                damage: uniqueCandidates[0]
+            };
+        }
+
+        /* Leave the row unprocessed if its damage value has not been filled
+         * yet. A later characterData/child mutation can then parse it again. */
+        return null;
+    }
+
+    function processDamageEvent(entry) {
+        if (
+            !settings.combatTrackerEnabled ||
+            !settings.combatDamageTrackerEnabled
+        ) {
+            return;
+        }
+
+        const id = entry?.dataset?.sentAt;
+        if (!id) return;
+
+        /* Ignore restored combat history during the same warm-up window
+         * already used by the victory tracker. */
+        if (!victoryTrackingReady) {
+            processedDamageEvents.add(id);
+            return;
+        }
+
+        if (processedDamageEvents.has(id)) {
+            return;
+        }
+
+        const event =
+            parseOutgoingDamageEvent(entry);
+
+        /* Some Tidefall log nodes are inserted before their final text is
+         * populated. Only mark a live entry processed after it actually
+         * parses as a hit/miss so a later characterData mutation can still
+         * be recognized. */
+        if (!event) {
+            return;
+        }
+
+        processedDamageEvents.add(id);
+        recordCombatDamageEventTime(entry);
+
+        if (
+            !combatRunning &&
+            combatKills === 0 &&
+            combatDamageHits === 0 &&
+            combatDamageMisses === 0 &&
+            isActuallyInCombat()
+        ) {
+            combatRunning = true;
+            combatSessionStartedAt = Date.now();
+            combatHistoryArchivedCurrentSession = false;
+            lastCombatTime = Date.now();
+
+            if (lastQuantities.size === 0) {
+                initializeItemTracking();
+            } else {
+                pendingItemDecreases.clear();
+
+                getEquippedConsumables()
+                    .forEach(
+                        (quantity, itemId) => {
+                            const price =
+                                getCachedPrice(itemId);
+
+                            if (
+                                quantity > 0 &&
+                                price > 0
+                            ) {
+                                sessionPrices.set(
+                                    itemId,
+                                    price
+                                );
+                            }
+                        }
+                    );
+            }
+
+            combatPanel.style.display =
+                settings.combatSessionLayout ===
+                    'header'
+                    ? 'none'
+                    : 'block';
+
+            combatStatusElement.textContent =
+                'Tracking combat...';
+
+            updateCombatButton();
+        }
+
+        updateCombatDamageClock();
+
+        if (event.type === 'miss') {
+            combatDamageMisses += 1;
+            updateDamageWindowDisplay();
+            updateCombatHeaderLayout();
+            return;
+        }
+
+        const damage =
+            Number(event.damage) || 0;
+
+        if (damage <= 0) return;
+
+        combatDamageTotal += damage;
+        combatDamageHits += 1;
+        combatDamageMin = Math.min(
+            combatDamageMin,
+            damage
+        );
+        combatDamageMax = Math.max(
+            combatDamageMax,
+            damage
+        );
+
+        updateDamageWindowDisplay();
+        updateCombatHeaderLayout();
+    }
+
+    function scanDamageEvents() {
+        if (!settings.combatDamageTrackerEnabled) {
+            return;
+        }
+
+        document.querySelectorAll(
+            '.log-entry.log-combat.combat-row--outgoing-hit[data-sent-at], ' +
+            '.log-entry.log-combat.combat-row--miss[data-sent-at]'
+        ).forEach(processDamageEvent);
+    }
+
+    function archiveCombatSession() {
+        if (
+            !settings.combatSessionHistoryEnabled ||
+            combatHistoryArchivedCurrentSession ||
+            combatKills <= 0
+        ) {
+            return;
+        }
+
+        const durationSeconds =
+            getCombatSessionDurationSeconds();
+        const ammoCost = getAmmoCost();
+        const foodCost = getFoodCost();
+        const repairCost = getRepairCost();
+        const consumableCost =
+            getConsumableCost();
+        const netGold =
+            combatGrossGold - consumableCost;
+        const hours =
+            Math.max(
+                durationSeconds / 3600,
+                1 / 3600
+            );
+
+        const sessionEndedAt =
+            lastCombatTime > combatSessionStartedAt
+                ? lastCombatTime
+                : Date.now();
+
+        combatSessionHistory.unshift({
+            id:
+                `${Date.now()}-${combatKills}-${Math.round(combatGrossGold)}`,
+            startedAt:
+                combatSessionStartedAt || Date.now(),
+            endedAt:
+                sessionEndedAt,
+            durationSeconds,
+            kills:
+                combatKills,
+            xp:
+                combatTotalXP,
+            grossGold:
+                combatGrossGold,
+            ammoCost,
+            foodCost,
+            repairCost,
+            consumableCost,
+            netGold,
+            netGoldPerHour:
+                netGold / hours,
+            xpPerHour:
+                combatTotalXP / hours,
+            damageTotal:
+                combatDamageTotal,
+            damageHits:
+                combatDamageHits,
+            damageMisses:
+                combatDamageMisses,
+            damageDps:
+                getCombatDps(),
+            damageAverage:
+                getCombatAverageHit(),
+            damageMin:
+                Number.isFinite(combatDamageMin)
+                    ? combatDamageMin
+                    : 0,
+            damageMax:
+                combatDamageMax
+        });
+
+        combatSessionHistory =
+            combatSessionHistory.slice(
+                0,
+                COMBAT_HISTORY_MAX
+            );
+
+        combatHistoryArchivedCurrentSession =
+            true;
+
+        saveCombatSessionHistory();
+        renderCombatSessionHistory();
+    }
+
+    function renderCombatSessionHistory() {
+        if (!combatHistoryBody) {
+            return;
+        }
+
+        combatHistoryBody.replaceChildren();
+
+        if (
+            !settings.combatSessionHistoryEnabled ||
+            combatSessionHistory.length === 0
+        ) {
+            const empty =
+                document.createElement('div');
+
+            empty.className =
+                'tf-combat-history-empty';
+
+            empty.textContent =
+                settings.combatSessionHistoryEnabled
+                    ? 'No completed combat sessions yet.'
+                    : 'Combat Session History is disabled in First Mate settings.';
+
+            combatHistoryBody.appendChild(empty);
+            return;
+        }
+
+        combatSessionHistory.forEach(
+            session => {
+                const entry =
+                    document.createElement('div');
+
+                entry.className =
+                    'tf-combat-history-entry';
+
+                const time =
+                    document.createElement('div');
+
+                time.className =
+                    'tf-combat-history-time';
+
+                time.textContent =
+                    new Date(
+                        Number(session.endedAt) ||
+                        Date.now()
+                    ).toLocaleString(
+                        [],
+                        {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit'
+                        }
+                    );
+
+                const grid =
+                    document.createElement('div');
+
+                grid.className =
+                    'tf-combat-history-grid';
+
+                const rows = [
+                    [
+                        'Duration',
+                        formatDuration(
+                            Number(session.durationSeconds) || 0
+                        )
+                    ],
+                    [
+                        'Kills',
+                        Math.round(
+                            Number(session.kills) || 0
+                        ).toLocaleString()
+                    ],
+                    [
+                        'XP',
+                        Math.round(
+                            Number(session.xp) || 0
+                        ).toLocaleString()
+                    ],
+                    [
+                        'Gross',
+                        `${Math.round(
+                            Number(session.grossGold) || 0
+                        ).toLocaleString()}g`
+                    ],
+                    [
+                        'Ammo',
+                        `-${Math.round(
+                            Number(session.ammoCost) || 0
+                        ).toLocaleString()}g`
+                    ],
+                    [
+                        'Food',
+                        `-${Math.round(
+                            Number(session.foodCost) || 0
+                        ).toLocaleString()}g`
+                    ],
+                    [
+                        'Repairs',
+                        `-${Math.round(
+                            Number(session.repairCost) || 0
+                        ).toLocaleString()}g`
+                    ],
+                    [
+                        'Net',
+                        `${Math.round(
+                            Number(session.netGold) || 0
+                        ).toLocaleString()}g`
+                    ],
+                    [
+                        'Net / hr',
+                        `${formatRate(
+                            Number(session.netGoldPerHour)
+                        )}g`
+                    ],
+                    [
+                        'XP / hr',
+                        formatRate(
+                            Number(session.xpPerHour)
+                        )
+                    ]
+                ];
+
+                if (
+                    Number(session.damageHits) > 0 ||
+                    Number(session.damageMisses) > 0
+                ) {
+                    rows.push(
+                        [
+                            'DPS',
+                            formatRate(
+                                Number(session.damageDps)
+                            )
+                        ],
+                        [
+                            'Avg Hit',
+                            Math.round(
+                                Number(session.damageAverage) || 0
+                            ).toLocaleString()
+                        ],
+                        [
+                            'Min / Max',
+                            `${Math.round(
+                                Number(session.damageMin) || 0
+                            ).toLocaleString()} / ${Math.round(
+                                Number(session.damageMax) || 0
+                            ).toLocaleString()}`
+                        ]
+                    );
+                }
+
+                rows.forEach(
+                    ([labelText, valueText]) => {
+                        const row =
+                            document.createElement('div');
+                        const label =
+                            document.createElement('span');
+                        const value =
+                            document.createElement('strong');
+
+                        label.textContent =
+                            labelText;
+                        value.textContent =
+                            valueText;
+
+                        row.append(
+                            label,
+                            value
+                        );
+                        grid.appendChild(row);
+                    }
+                );
+
+                entry.append(
+                    time,
+                    grid
+                );
+                combatHistoryBody.appendChild(entry);
+            }
+        );
+    }
+
+    function openCombatSessionHistory() {
+        if (!settings.combatSessionHistoryEnabled) {
+            return;
+        }
+
+        renderCombatSessionHistory();
+        combatHistoryWindow.classList.add(
+            'tf-open'
+        );
+    }
+
+    function closeCombatSessionHistory() {
+        combatHistoryWindow.classList.remove(
+            'tf-open'
+        );
+    }
+
+    function clearCombatSessionHistory() {
+        combatSessionHistory = [];
+        saveCombatSessionHistory();
+        renderCombatSessionHistory();
+    }
 
     // =========================================================
     // PRICE CACHE
@@ -5541,7 +6853,109 @@
             'none';
     }
 
+    function getCurrentCombatAmmoName() {
+        const equipped =
+            getEquippedConsumables();
+
+        let bestName = '';
+        let bestQuantity = -1;
+
+        equipped.forEach(
+            (quantity, itemId) => {
+                if (!AMMO_IDS.has(itemId)) {
+                    return;
+                }
+
+                const amount =
+                    Number(quantity) || 0;
+
+                if (amount > bestQuantity) {
+                    bestQuantity = amount;
+                    bestName =
+                        ITEM_NAMES[itemId] ||
+                        `Ammo ${itemId}`;
+                }
+            }
+        );
+
+        return bestName;
+    }
+
+    function updateDamageWindowDisplay() {
+        if (!damageWindow) return;
+
+        const dps = getCombatDps();
+        const average = getCombatAverageHit();
+        const accuracy = getCombatAccuracy();
+
+        setTextIfChanged(
+            damageDpsElement,
+            combatDamageHits > 0
+                ? formatRate(dps)
+                : '—'
+        );
+        setTextIfChanged(
+            damageAverageElement,
+            combatDamageHits > 0
+                ? Math.round(average).toLocaleString()
+                : '—'
+        );
+        setTextIfChanged(
+            damageMinElement,
+            combatDamageHits > 0 && Number.isFinite(combatDamageMin)
+                ? Math.round(combatDamageMin).toLocaleString()
+                : '—'
+        );
+        setTextIfChanged(
+            damageMaxElement,
+            combatDamageHits > 0
+                ? Math.round(combatDamageMax).toLocaleString()
+                : '—'
+        );
+        setTextIfChanged(
+            damageTotalElement,
+            Math.round(combatDamageTotal).toLocaleString()
+        );
+        setTextIfChanged(
+            damageAmmoElement,
+            getCurrentCombatAmmoName() || '—'
+        );
+        setTextIfChanged(
+            damageHitsElement,
+            combatDamageHits.toLocaleString()
+        );
+        setTextIfChanged(
+            damageMissesElement,
+            combatDamageMisses.toLocaleString()
+        );
+        setTextIfChanged(
+            damageAccuracyElement,
+            Number.isFinite(accuracy)
+                ? `${accuracy.toFixed(1)}%`
+                : '—'
+        );
+    }
+
+    function openDamageWindow() {
+        if (!settings.combatDamageTrackerEnabled) {
+            return;
+        }
+
+        damageWindow.classList.add('tf-open');
+        damageWindow.style.display = 'block';
+        damageWindow.style.zIndex = '10000000';
+        updateDamageWindowDisplay();
+    }
+
+    function closeDamageWindow() {
+        damageWindow.classList.remove('tf-open');
+        damageWindow.style.display = 'none';
+    }
+
     function updateCombatDisplay() {
+        updateCombatDamageClock();
+        updateDamageWindowDisplay();
+
         setTextIfChanged(
             killsElement,
             combatKills.toLocaleString()
@@ -5818,7 +7232,31 @@
             !combatRunning &&
             combatKills === 0
         ) {
+            /*
+             * A one-shot kill can add the outgoing-damage entry and victory
+             * entry in the same Tidefall render. scanVictories() intentionally
+             * reads damage first, so do not wipe a hit/miss that was captured
+             * moments before this first victory starts the visible session.
+             */
+            const openingDamageAlreadyCaptured =
+                combatDamageHits > 0 ||
+                combatDamageMisses > 0 ||
+                combatDamageTotal > 0;
+
             combatRunning = true;
+            combatSessionStartedAt = Date.now();
+            combatHistoryArchivedCurrentSession = false;
+
+            if (!openingDamageAlreadyCaptured) {
+                resetCombatDamageSession();
+            } else {
+                /* Start the DPS clock now if Tidefall already removed the
+                 * combat HUD before the opening one-shot was parsed. */
+                if (!combatDamageActiveStartedAt && combatDamageActiveMs <= 0) {
+                    combatDamageActiveMs = 1000;
+                }
+                updateDamageWindowDisplay();
+            }
 
             if (lastQuantities.size === 0) {
                 initializeItemTracking();
@@ -5868,6 +7306,13 @@
     }
 
     function scanVictories() {
+        /*
+         * Read damage first. The first observed hit can establish the
+         * session before a victory message arrives, preserving the opening
+         * volley instead of resetting it when the first kill is detected.
+         */
+        scanDamageEvents();
+
         getVictoryEntries()
             .forEach(
                 processVictory
@@ -5875,12 +7320,18 @@
     }
 
     function resetCombatSession() {
+        archiveCombatSession();
+
         combatRunning =
             false;
 
         combatKills = 0;
         combatTotalXP = 0;
         combatGrossGold = 0;
+        combatSessionStartedAt = 0;
+        combatHistoryArchivedCurrentSession = false;
+
+        resetCombatDamageSession();
 
         consumedItems.clear();
         sessionPrices.clear();
@@ -5895,6 +7346,7 @@
             0;
 
         closeCostWindow();
+        closeDamageWindow();
 
         combatPanel.style.display =
             'none';
@@ -5975,17 +7427,30 @@
         closeCostWindow
     );
 
+    damageWindowClose.addEventListener(
+        'click',
+        closeDamageWindow
+    );
+
     startStopButton.addEventListener(
         'click',
         () => {
 
             if (combatRunning) {
+                archiveCombatSession();
+
                 combatRunning =
                     false;
             } else {
+                archiveCombatSession();
+
                 combatKills = 0;
                 combatTotalXP = 0;
                 combatGrossGold = 0;
+                combatSessionStartedAt = Date.now();
+                combatHistoryArchivedCurrentSession = false;
+
+                resetCombatDamageSession();
 
                 consumedItems.clear();
                 sessionPrices.clear();
@@ -6010,6 +7475,30 @@
 
             updateCombatButton();
             updateCombatDisplay();
+        }
+    );
+
+    combatHistoryButton.addEventListener(
+        'click',
+        openCombatSessionHistory
+    );
+
+    combatHistoryCloseButton.addEventListener(
+        'click',
+        closeCombatSessionHistory
+    );
+
+    combatHistoryClearButton.addEventListener(
+        'click',
+        clearCombatSessionHistory
+    );
+
+    queueFinishedToast.addEventListener(
+        'click',
+        () => {
+            queueFinishedToast.classList.remove(
+                'tf-open'
+            );
         }
     );
 
@@ -6150,6 +7639,241 @@
 
     let activityEstimateLastUpdated =
         0;
+
+    let activityXPSamples = [];
+
+    function resetActivityXPSamples() {
+        activityXPSamples = [
+            {
+                at: Date.now(),
+                totalXP: 0
+            }
+        ];
+    }
+
+    function recordActivityXPSample() {
+        const now = Date.now();
+        const last =
+            activityXPSamples[
+                activityXPSamples.length - 1
+            ];
+
+        if (
+            last &&
+            last.totalXP === activityTotalXP &&
+            now - last.at < 1000
+        ) {
+            return;
+        }
+
+        activityXPSamples.push({
+            at: now,
+            totalXP: activityTotalXP
+        });
+
+        const cutoff =
+            now - 65 * 60 * 1000;
+
+        while (
+            activityXPSamples.length > 2 &&
+            activityXPSamples[1].at < cutoff
+        ) {
+            activityXPSamples.shift();
+        }
+    }
+
+    function getActualActivityXPPerHour() {
+        if (
+            !activityStarted ||
+            activityStartTime <= 0 ||
+            activityTotalXP <= 0
+        ) {
+            return null;
+        }
+
+        const elapsedSeconds =
+            (Date.now() - activityStartTime) /
+            1000;
+
+        if (elapsedSeconds <= 0) {
+            return null;
+        }
+
+        return (
+            activityTotalXP /
+            elapsedSeconds *
+            3600
+        );
+    }
+
+    function getRollingActivityXPPerHour(
+        windowSeconds
+    ) {
+        if (
+            !activityStarted ||
+            activityTotalXP <= 0 ||
+            activityXPSamples.length === 0
+        ) {
+            return null;
+        }
+
+        const now = Date.now();
+        const target =
+            now - windowSeconds * 1000;
+        let baseline =
+            activityXPSamples[0];
+
+        for (
+            const sample
+            of activityXPSamples
+        ) {
+            if (sample.at <= target) {
+                baseline = sample;
+            } else {
+                break;
+            }
+        }
+
+        const elapsedSeconds =
+            (now - baseline.at) /
+            1000;
+        const gained =
+            activityTotalXP -
+            Number(baseline.totalXP || 0);
+
+        if (
+            elapsedSeconds <= 0 ||
+            gained <= 0
+        ) {
+            return null;
+        }
+
+        return gained /
+            elapsedSeconds *
+            3600;
+    }
+
+    function getTheoreticalActivityXPPerHour() {
+        if (
+            !activityStarted ||
+            !activityTaskName
+        ) {
+            return null;
+        }
+
+        const base =
+            getBaseActivityRecipe(
+                activityTaskName
+            );
+
+        if (base) {
+            const modifiers =
+                getCurrentProfessionModifiers();
+            let masteryXP =
+                modifiers.masteryXP;
+
+            if (
+                activityActions > 0 &&
+                activityTotalXP > 0
+            ) {
+                const currentSessionXPPerAction =
+                    activityTotalXP /
+                    activityActions;
+
+                masteryXP =
+                    Math.max(
+                        0,
+                        Math.min(
+                            9,
+                            Math.round(
+                                currentSessionXPPerAction -
+                                base.xp
+                            )
+                        )
+                    );
+            }
+
+            const cycleSeconds =
+                base.seconds *
+                modifiers.speedMultiplier;
+            const xpPerAction =
+                base.xp + masteryXP;
+
+            if (
+                Number.isFinite(cycleSeconds) &&
+                cycleSeconds > 0 &&
+                Number.isFinite(xpPerAction) &&
+                xpPerAction > 0
+            ) {
+                return (
+                    3600 /
+                    cycleSeconds *
+                    xpPerAction
+                );
+            }
+        }
+
+        const stats =
+            getPredictedTaskStats(
+                activityTaskName
+            );
+
+        if (
+            !stats ||
+            !Number.isFinite(
+                stats.xpPerAction
+            ) ||
+            stats.xpPerAction <= 0 ||
+            !Number.isFinite(
+                stats.cycleSeconds
+            ) ||
+            stats.cycleSeconds <= 0
+        ) {
+            return activityEstimatedXPPerHour;
+        }
+
+        return (
+            3600 /
+            stats.cycleSeconds *
+            stats.xpPerAction
+        );
+    }
+
+    function getActivityXPRateSnapshot() {
+        const theoretical =
+            getTheoreticalActivityXPPerHour();
+        const actual =
+            getActualActivityXPPerHour();
+        const rolling5m =
+            getRollingActivityXPPerHour(
+                5 * 60
+            );
+        const rolling15m =
+            getRollingActivityXPPerHour(
+                15 * 60
+            );
+        const rolling1h =
+            getRollingActivityXPPerHour(
+                60 * 60
+            );
+        const efficiency =
+            Number.isFinite(actual) &&
+            Number.isFinite(theoretical) &&
+            theoretical > 0
+                ? actual /
+                    theoretical *
+                    100
+                : null;
+
+        return {
+            theoretical,
+            actual,
+            rolling5m,
+            rolling15m,
+            rolling1h,
+            efficiency
+        };
+    }
 
     // =========================================================
     // ACTIVITY DOM
@@ -6538,6 +8262,8 @@
         activityCycleObservedThisSession =
             false;
 
+        activityXPSamples = [];
+
         activityHistoryCommittedActions =
             0;
 
@@ -6610,6 +8336,8 @@
 
         activityStartTime =
             Date.now();
+
+        resetActivityXPSamples();
 
         const xp =
             getSkillXP(
@@ -6980,6 +8708,8 @@
         ) {
             activityTotalXP +=
                 gained;
+
+            recordActivityXPSample();
         }
 
         if (
@@ -7046,11 +8776,18 @@
                 completed;
 
             /*
-             * If the user closed the Activity Session,
-             * the next completed action reopens it.
+             * The legacy window layout reopens the Activity Session after a
+             * completed action. In header layout this caused the floating
+             * Activity Session window to flash briefly over Tidefall's native
+             * activity panel every cycle, so never reopen that window here.
              */
-            activityPanelClosed =
-                false;
+            if (
+                settings.activitySessionLayout !==
+                    'header'
+            ) {
+                activityPanelClosed =
+                    false;
+            }
 
             /*
              * Refresh level progress after every completed
@@ -7075,6 +8812,8 @@
                 activityActions > 0
             ) {
                 if (
+                    settings.activitySessionLayout !==
+                        'header' &&
                     !activityPanelClosed
                 ) {
                     activityPanel.style.display =
@@ -7422,6 +9161,7 @@
      * especially when multiple entries use the same recipe.
      */
     let cachedQueuedActivities = [];
+    let cachedQueuedActivitiesOrdered = [];
 
     let cachedQueueBadgeCount = 0;
 
@@ -7695,6 +9435,11 @@
             );
 
         if (snapshotComplete) {
+            cachedQueuedActivitiesOrdered =
+                liveEntries.map(entry => ({
+                    ...entry
+                }));
+
             const grouped =
                 new Map();
 
@@ -7746,6 +9491,7 @@
                 queueCount;
         } else if (queueCount <= 0) {
             cachedQueuedActivities = [];
+            cachedQueuedActivitiesOrdered = [];
             cachedQueueBadgeCount = 0;
         }
 
@@ -8728,10 +10474,314 @@
         return null;
     }
 
+    function getQueueCompletionDetails() {
+        const currentActivity =
+            getCurrentActivity();
+
+        if (!currentActivity) {
+            return null;
+        }
+
+        const activeExactSeconds =
+            getTaskEndRemainingSeconds();
+        const activeSeconds =
+            Number.isFinite(activeExactSeconds) &&
+            activeExactSeconds > 0
+                ? activeExactSeconds
+                : getCurrentTaskRemainingSeconds();
+
+        if (
+            !Number.isFinite(activeSeconds) ||
+            activeSeconds <= 0
+        ) {
+            return null;
+        }
+
+        const now = Date.now();
+        let cumulativeSeconds =
+            activeSeconds;
+        let approximate =
+            !Number.isFinite(activeExactSeconds) ||
+            activeExactSeconds <= 0;
+
+        const details = [
+            {
+                taskName:
+                    currentActivity.taskName,
+                cycles:
+                    getActivityCyclesLeft(),
+                active: true,
+                durationSeconds:
+                    activeSeconds,
+                endsAt:
+                    now + activeSeconds * 1000
+            }
+        ];
+
+        const badge =
+            document.querySelector(
+                '#task-queue-badge'
+            );
+        const queueCount =
+            isQueueBadgeVisible(badge)
+                ? numberFromText(
+                    badge?.textContent
+                )
+                : 0;
+        const groupedRows =
+            getQueuedActivitySnapshot(
+                queueCount
+            );
+        const rows =
+            cachedQueuedActivitiesOrdered.length > 0
+                ? cachedQueuedActivitiesOrdered
+                : groupedRows;
+
+        rows.forEach(row => {
+            const cycles =
+                getQueuedCycleCount(row);
+            const taskName =
+                getQueuedTaskName(row);
+
+            if (
+                !taskName ||
+                cycles <= 0
+            ) {
+                return;
+            }
+
+            const stats =
+                getPredictedTaskStats(
+                    taskName
+                );
+            let cycleSeconds =
+                stats?.cycleSeconds;
+
+            if (
+                !Number.isFinite(cycleSeconds) ||
+                cycleSeconds <= 0
+            ) {
+                cycleSeconds =
+                    activityCycleSeconds;
+                approximate = true;
+            } else if (
+                stats?.source !==
+                    'observed' &&
+                stats?.source !==
+                    'current-city-adjusted'
+            ) {
+                approximate = true;
+            }
+
+            if (
+                !Number.isFinite(cycleSeconds) ||
+                cycleSeconds <= 0
+            ) {
+                return;
+            }
+
+            const durationSeconds =
+                cycles * cycleSeconds;
+
+            cumulativeSeconds +=
+                durationSeconds;
+
+            details.push({
+                taskName,
+                cycles,
+                active: false,
+                durationSeconds,
+                endsAt:
+                    now +
+                    cumulativeSeconds * 1000
+            });
+        });
+
+        return {
+            details,
+            totalSeconds:
+                cumulativeSeconds,
+            endsAt:
+                now +
+                cumulativeSeconds * 1000,
+            approximate
+        };
+    }
+
+    let queueNotificationArmed = false;
+    let queueNotificationTargetAt = 0;
+    let queueNotificationExpectedFinalTask = '';
+    let queueNotificationFinalTaskSeen = false;
+    let queueNotificationLastEstimateAt = 0;
+    let queueNotificationToastTimer = null;
+
+    function clearQueueNotificationState() {
+        queueNotificationArmed = false;
+        queueNotificationTargetAt = 0;
+        queueNotificationExpectedFinalTask = '';
+        queueNotificationFinalTaskSeen = false;
+        queueNotificationLastEstimateAt = 0;
+    }
+
+    function showQueueFinishedNotification() {
+        /*
+         * Queue completion uses the same in-game warning treatment as the
+         * Low Hull warning. It intentionally does not request or create a
+         * browser/OS notification. The banner stays visible until clicked.
+         */
+        queueFinishedToast.classList.add(
+            'tf-open'
+        );
+    }
+
+    function updateQueueFinishedNotification(
+        estimate
+    ) {
+        if (
+            !settings.queueFinishedNotificationEnabled
+        ) {
+            clearQueueNotificationState();
+            return;
+        }
+
+        const now = Date.now();
+
+        if (
+            estimate &&
+            Number.isFinite(estimate.seconds) &&
+            estimate.seconds > 0
+        ) {
+            const queued =
+                cachedQueuedActivitiesOrdered.length > 0
+                    ? cachedQueuedActivitiesOrdered
+                    : cachedQueuedActivities;
+            const finalQueued =
+                queued[
+                    queued.length - 1
+                ];
+
+            queueNotificationArmed = true;
+            queueNotificationTargetAt =
+                now +
+                estimate.seconds * 1000;
+            queueNotificationLastEstimateAt =
+                now;
+
+            if (finalQueued?.taskName) {
+                const nextExpectedFinalTask =
+                    normalizeActivityKeyPart(
+                        getCanonicalActivityTaskName(
+                            finalQueued.taskName
+                        )
+                    );
+
+                if (
+                    nextExpectedFinalTask !==
+                    queueNotificationExpectedFinalTask
+                ) {
+                    queueNotificationFinalTaskSeen =
+                        false;
+                }
+
+                queueNotificationExpectedFinalTask =
+                    nextExpectedFinalTask;
+            }
+
+            return;
+        }
+
+        if (!queueNotificationArmed) {
+            return;
+        }
+
+        const currentActivity =
+            getCurrentActivity();
+        const currentCanonical =
+            currentActivity
+                ? normalizeActivityKeyPart(
+                    getCanonicalActivityTaskName(
+                        currentActivity.taskName
+                    )
+                )
+                : '';
+        const estimateMissingFor =
+            now -
+            queueNotificationLastEstimateAt;
+
+        if (
+            currentActivity &&
+            queueNotificationExpectedFinalTask &&
+            currentCanonical ===
+                queueNotificationExpectedFinalTask
+        ) {
+            queueNotificationFinalTaskSeen =
+                true;
+        }
+
+        if (
+            now < queueNotificationTargetAt
+        ) {
+            if (
+                estimateMissingFor >
+                    QUEUE_TRANSITION_GRACE_MS &&
+                (
+                    !currentActivity ||
+                    (
+                        queueNotificationExpectedFinalTask &&
+                        currentCanonical !==
+                            queueNotificationExpectedFinalTask
+                    )
+                )
+            ) {
+                clearQueueNotificationState();
+            }
+
+            return;
+        }
+
+        if (
+            currentActivity &&
+            queueNotificationExpectedFinalTask &&
+            currentCanonical ===
+                queueNotificationExpectedFinalTask
+        ) {
+            return;
+        }
+
+        if (
+            currentActivity &&
+            queueNotificationExpectedFinalTask &&
+            currentCanonical !==
+                queueNotificationExpectedFinalTask
+        ) {
+            clearQueueNotificationState();
+            return;
+        }
+
+        if (
+            queueNotificationExpectedFinalTask &&
+            !queueNotificationFinalTaskSeen
+        ) {
+            clearQueueNotificationState();
+            return;
+        }
+
+        showQueueFinishedNotification();
+        clearQueueNotificationState();
+    }
+
     function updateQueueRemainingDisplay() {
         if (
             !settings.activityQueueRemaining
         ) {
+            if (
+                settings.queueFinishedNotificationEnabled
+            ) {
+                updateQueueFinishedNotification(
+                    getQueueRemainingEstimate()
+                );
+            }
+
             setDisplayIfChanged(
                 activityQueueRow,
                 'none'
@@ -8756,6 +10806,10 @@
 
         const estimate =
             getQueueRemainingEstimate();
+
+        updateQueueFinishedNotification(
+            estimate
+        );
 
         if (!estimate) {
             setDisplayIfChanged(
@@ -8862,9 +10916,7 @@
 
         setTextIfChanged(
             activityQueueRemainingElement,
-            formatDuration(
-                remainingSeconds
-            )
+            `${formatDuration(remainingSeconds)} · Ends ${formatQueueFinishClock(remainingSeconds)}`
         );
 
         return estimate;
@@ -8916,14 +10968,97 @@
             'block'
         );
 
+        const xpRates =
+            getActivityXPRateSnapshot();
+
+        setTextIfChanged(
+            activityXpHourLabel,
+            settings.actualVsTheoreticalXPEnabled
+                ? 'Theoretical XP / Hour'
+                : 'XP / Hour'
+        );
+
         setTextIfChanged(
             activityXpHourElement,
-            activityEstimatedXPPerHour ===
-                null
-                ? '—'
-                : Math.round(
-                    activityEstimatedXPPerHour
-                ).toLocaleString()
+            settings.actualVsTheoreticalXPEnabled
+                ? formatRate(
+                    xpRates.theoretical
+                )
+                : (
+                    activityEstimatedXPPerHour ===
+                        null
+                        ? '—'
+                        : Math.round(
+                            activityEstimatedXPPerHour
+                        ).toLocaleString()
+                )
+        );
+
+        setDisplayIfChanged(
+            activityActualXpRow,
+            settings.actualVsTheoreticalXPEnabled
+                ? 'grid'
+                : 'none'
+        );
+
+        setDisplayIfChanged(
+            activityXpEfficiencyRow,
+            settings.actualVsTheoreticalXPEnabled
+                ? 'grid'
+                : 'none'
+        );
+
+        setTextIfChanged(
+            activityActualXpHourElement,
+            formatRate(
+                xpRates.actual
+            )
+        );
+
+        setTextIfChanged(
+            activityXpEfficiencyElement,
+            Number.isFinite(
+                xpRates.efficiency
+            )
+                ? `${xpRates.efficiency.toFixed(1)}%`
+                : '—'
+        );
+
+        const rollingDisplay =
+            settings.rollingXPRatesEnabled
+                ? 'grid'
+                : 'none';
+
+        setDisplayIfChanged(
+            activityRolling5mRow,
+            rollingDisplay
+        );
+        setDisplayIfChanged(
+            activityRolling15mRow,
+            rollingDisplay
+        );
+        setDisplayIfChanged(
+            activityRolling1hRow,
+            rollingDisplay
+        );
+
+        setTextIfChanged(
+            activityRolling5mElement,
+            formatRate(
+                xpRates.rolling5m
+            )
+        );
+        setTextIfChanged(
+            activityRolling15mElement,
+            formatRate(
+                xpRates.rolling15m
+            )
+        );
+        setTextIfChanged(
+            activityRolling1hElement,
+            formatRate(
+                xpRates.rolling1h
+            )
         );
 
         setTextIfChanged(
@@ -9536,11 +11671,28 @@
                 <span id="tf-header-combat-level" class="tf-combat-header-value">—</span>
             </span>
 
+            <span class="tf-combat-header-stat" data-kind="dps">
+                <span class="tf-combat-header-label">DPS</span>
+                <span id="tf-header-combat-dps" class="tf-combat-header-value">—</span>
+            </span>
+
             <span class="tf-combat-header-stat" data-kind="gold">
                 <span class="tf-combat-header-label">Net Gold</span>
                 <span id="tf-header-combat-gold" class="tf-combat-header-value">0</span>
             </span>
         `;
+
+        bar.querySelector(
+            '[data-kind="dps"]'
+        )?.addEventListener(
+            'click',
+            event => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                openDamageWindow();
+            }
+        );
 
         bar.querySelector(
             '[data-kind="gold"]'
@@ -9551,6 +11703,23 @@
                 event.stopPropagation();
 
                 openCostWindow();
+            }
+        );
+
+        bar.querySelector(
+            '.tf-combat-header-title'
+        )?.addEventListener(
+            'click',
+            event => {
+                if (
+                    !settings.combatSessionHistoryEnabled
+                ) {
+                    return;
+                }
+
+                event.preventDefault();
+                event.stopPropagation();
+                openCombatSessionHistory();
             }
         );
 
@@ -9607,6 +11776,13 @@
             return;
         }
 
+        combatHeaderLayout.querySelector(
+            '.tf-combat-header-title'
+        )?.classList.toggle(
+            'tf-history-enabled',
+            settings.combatSessionHistoryEnabled
+        );
+
         const combatActive =
             shouldPvEOccupySharedHeader();
 
@@ -9638,6 +11814,27 @@
                 combatGrossGold -
                 getConsumableCost()
             );
+
+        const dpsStat =
+            combatHeaderLayout.querySelector(
+                '[data-kind="dps"]'
+            );
+
+        setDisplayIfChanged(
+            dpsStat,
+            settings.combatDamageTrackerEnabled
+                ? ''
+                : 'none'
+        );
+
+        setTextIfChanged(
+            combatHeaderLayout.querySelector(
+                '#tf-header-combat-dps'
+            ),
+            combatDamageHits > 0
+                ? formatRate(getCombatDps())
+                : '—'
+        );
 
         setTextIfChanged(
             combatHeaderLayout.querySelector(
@@ -9764,6 +11961,277 @@
         return tidefallTopHeaderCache;
     }
 
+    function appendHeaderTooltipRow(
+        tooltip,
+        labelText,
+        valueText
+    ) {
+        const row =
+            document.createElement('div');
+        const label =
+            document.createElement('span');
+        const value =
+            document.createElement('strong');
+
+        row.className =
+            'tf-header-tooltip-row';
+        label.textContent =
+            labelText;
+        value.textContent =
+            valueText;
+
+        row.append(
+            label,
+            value
+        );
+        tooltip.appendChild(row);
+    }
+
+    function appendHeaderTooltipTitle(
+        tooltip,
+        text
+    ) {
+        const title =
+            document.createElement('div');
+
+        title.className =
+            'tf-header-tooltip-title';
+        title.textContent = text;
+        tooltip.appendChild(title);
+    }
+
+    function appendHeaderTooltipSubtitle(
+        tooltip,
+        text
+    ) {
+        const subtitle =
+            document.createElement('div');
+
+        subtitle.className =
+            'tf-header-tooltip-subtitle';
+        subtitle.textContent = text;
+        tooltip.appendChild(subtitle);
+    }
+
+    function renderActivityXPRateTooltip() {
+        const tooltip =
+            document.getElementById(
+                'tf-header-xp-tooltip'
+            );
+
+        if (!tooltip) {
+            return;
+        }
+
+        if (
+            !settings.actualVsTheoreticalXPEnabled &&
+            !settings.rollingXPRatesEnabled
+        ) {
+            tooltip.replaceChildren();
+            tooltip.classList.remove(
+                'tf-open'
+            );
+            return;
+        }
+
+        const rates =
+            getActivityXPRateSnapshot();
+
+        tooltip.replaceChildren();
+        appendHeaderTooltipTitle(
+            tooltip,
+            'Activity XP Rates'
+        );
+
+        if (
+            settings.actualVsTheoreticalXPEnabled
+        ) {
+            appendHeaderTooltipRow(
+                tooltip,
+                'Theoretical',
+                `${formatRate(rates.theoretical)} XP/hr`
+            );
+            appendHeaderTooltipRow(
+                tooltip,
+                'Actual Session',
+                `${formatRate(rates.actual)} XP/hr`
+            );
+            appendHeaderTooltipRow(
+                tooltip,
+                'Efficiency',
+                Number.isFinite(rates.efficiency)
+                    ? `${rates.efficiency.toFixed(1)}%`
+                    : '—'
+            );
+        }
+
+        if (settings.rollingXPRatesEnabled) {
+            appendHeaderTooltipSubtitle(
+                tooltip,
+                'Rolling'
+            );
+            appendHeaderTooltipRow(
+                tooltip,
+                '5 minutes',
+                `${formatRate(rates.rolling5m)} XP/hr`
+            );
+            appendHeaderTooltipRow(
+                tooltip,
+                '15 minutes',
+                `${formatRate(rates.rolling15m)} XP/hr`
+            );
+            appendHeaderTooltipRow(
+                tooltip,
+                '1 hour',
+                `${formatRate(rates.rolling1h)} XP/hr`
+            );
+        }
+    }
+
+    function renderQueueCompletionTooltip() {
+        const tooltip =
+            document.getElementById(
+                'tf-header-queue-tooltip'
+            );
+
+        if (!tooltip) {
+            return;
+        }
+
+        if (
+            !settings.queueCompletionDetailsEnabled ||
+            !settings.activityQueueRemaining
+        ) {
+            tooltip.replaceChildren();
+            tooltip.classList.remove(
+                'tf-open'
+            );
+            return;
+        }
+
+        const completion =
+            getQueueCompletionDetails();
+
+        if (
+            !completion ||
+            completion.details.length === 0
+        ) {
+            tooltip.replaceChildren();
+            tooltip.classList.remove(
+                'tf-open'
+            );
+            return;
+        }
+
+        tooltip.replaceChildren();
+        appendHeaderTooltipTitle(
+            tooltip,
+            completion.approximate
+                ? 'Queue Completion · Estimated'
+                : 'Queue Completion'
+        );
+
+        completion.details.forEach(
+            detail => {
+                const count =
+                    !detail.active &&
+                    Number.isFinite(detail.cycles) &&
+                    detail.cycles > 0
+                        ? ` × ${Math.round(detail.cycles).toLocaleString()}`
+                        : '';
+
+                appendHeaderTooltipRow(
+                    tooltip,
+                    `${detail.taskName}${detail.active ? ' · Active' : count}`,
+                    formatCompletionTimeAt(
+                        detail.endsAt
+                    )
+                );
+            }
+        );
+
+        appendHeaderTooltipSubtitle(
+            tooltip,
+            'Total Queue'
+        );
+        appendHeaderTooltipRow(
+            tooltip,
+            formatDuration(
+                completion.totalSeconds
+            ),
+            `Ends ${formatCompletionTimeAt(completion.endsAt)}`
+        );
+    }
+
+    function positionHeaderHoverTooltip(
+        tooltip,
+        anchorElement
+    ) {
+        if (!tooltip || !anchorElement) {
+            return;
+        }
+
+        const anchorRect =
+            anchorElement.getBoundingClientRect();
+        const header =
+            findTidefallTopHeader();
+        const headerRect =
+            header?.getBoundingClientRect?.();
+
+        /*
+         * Measure after tf-open is applied. The tooltip is mounted directly
+         * under document.body so header overflow/stacking cannot clip it.
+         */
+        const tooltipWidth =
+            tooltip.offsetWidth || 320;
+        const tooltipHeight =
+            tooltip.offsetHeight || 120;
+        const margin = 8;
+
+        const desiredCenterX =
+            anchorRect.left +
+            anchorRect.width / 2;
+
+        let left =
+            desiredCenterX -
+            tooltipWidth / 2;
+
+        left = Math.max(
+            margin,
+            Math.min(
+                left,
+                window.innerWidth -
+                    tooltipWidth -
+                    margin
+            )
+        );
+
+        let top =
+            Math.max(
+                anchorRect.bottom,
+                headerRect?.bottom ||
+                    anchorRect.bottom
+            ) + 8;
+
+        if (
+            top + tooltipHeight >
+            window.innerHeight - margin
+        ) {
+            top = Math.max(
+                margin,
+                (headerRect?.top ||
+                    anchorRect.top) -
+                    tooltipHeight -
+                    8
+            );
+        }
+
+        tooltip.style.left =
+            `${Math.round(left)}px`;
+        tooltip.style.top =
+            `${Math.round(top)}px`;
+    }
+
     function buildActivityHeaderLayout() {
         if (activityHeaderLayout) {
             return activityHeaderLayout;
@@ -9785,6 +12253,7 @@
             <span class="tf-activity-header-stat" data-kind="xp">
                 <span class="tf-activity-header-label">XP/H</span>
                 <span id="tf-header-xp" class="tf-activity-header-value">—</span>
+                <div id="tf-header-xp-tooltip" class="tf-header-hover-tooltip"></div>
             </span>
 
             <span class="tf-activity-header-stat" data-kind="items">
@@ -9800,11 +12269,106 @@
             <span class="tf-activity-header-stat" data-kind="queue">
                 <span class="tf-activity-header-label">Queue</span>
                 <span id="tf-header-queue" class="tf-activity-header-value">—</span>
+                <div id="tf-header-queue-tooltip" class="tf-header-hover-tooltip"></div>
             </span>
 
 
             <span id="tf-header-task" class="tf-activity-header-task"></span>
         `;
+
+        const xpStat =
+            bar.querySelector(
+                '[data-kind="xp"]'
+            );
+        const xpTooltip =
+            bar.querySelector(
+                '#tf-header-xp-tooltip'
+            );
+        const queueStat =
+            bar.querySelector(
+                '[data-kind="queue"]'
+            );
+        const queueTooltip =
+            bar.querySelector(
+                '#tf-header-queue-tooltip'
+            );
+
+        /*
+         * Tidefall's top header can clip descendants. Mount hover panels at
+         * body level and position them below the full header instead.
+         */
+        if (xpTooltip) {
+            document.body.appendChild(
+                xpTooltip
+            );
+        }
+
+        if (queueTooltip) {
+            document.body.appendChild(
+                queueTooltip
+            );
+        }
+
+        xpStat?.addEventListener(
+            'mouseenter',
+            () => {
+                if (
+                    !settings.actualVsTheoreticalXPEnabled &&
+                    !settings.rollingXPRatesEnabled
+                ) {
+                    return;
+                }
+
+                renderActivityXPRateTooltip();
+                xpTooltip?.classList.add(
+                    'tf-open'
+                );
+                positionHeaderHoverTooltip(
+                    xpTooltip,
+                    xpStat
+                );
+            }
+        );
+
+        xpStat?.addEventListener(
+            'mouseleave',
+            () => {
+                xpTooltip?.classList.remove(
+                    'tf-open'
+                );
+            }
+        );
+
+        queueStat?.addEventListener(
+            'mouseenter',
+            () => {
+                if (
+                    !settings.queueCompletionDetailsEnabled
+                ) {
+                    return;
+                }
+
+                renderQueueCompletionTooltip();
+                if (queueTooltip?.childElementCount) {
+                    queueTooltip.classList.add(
+                        'tf-open'
+                    );
+                    positionHeaderHoverTooltip(
+                        queueTooltip,
+                        queueStat
+                    );
+                }
+            }
+        );
+
+        queueStat?.addEventListener(
+            'mouseleave',
+            () => {
+                queueTooltip?.classList.remove(
+                    'tf-open'
+                );
+            }
+        );
 
         activityHeaderLayout =
             bar;
@@ -9856,6 +12420,12 @@
                 'tf-active',
                 false
             );
+            document.getElementById(
+                'tf-header-xp-tooltip'
+            )?.classList.remove('tf-open');
+            document.getElementById(
+                'tf-header-queue-tooltip'
+            )?.classList.remove('tf-open');
 
             return;
         }
@@ -9875,6 +12445,12 @@
                 'tf-active',
                 false
             );
+            document.getElementById(
+                'tf-header-xp-tooltip'
+            )?.classList.remove('tf-open');
+            document.getElementById(
+                'tf-header-queue-tooltip'
+            )?.classList.remove('tf-open');
 
             return;
         }
@@ -9918,6 +12494,10 @@
                 ? queueEstimateOverride
                 : getQueueRemainingEstimate();
 
+        updateQueueFinishedNotification(
+            queueEstimate
+        );
+
         const preservingQueueTransition =
             Boolean(
                 queueEstimate &&
@@ -9942,16 +12522,31 @@
         );
 
         if (!visible) {
+            document.getElementById(
+                'tf-header-xp-tooltip'
+            )?.classList.remove('tf-open');
+            document.getElementById(
+                'tf-header-queue-tooltip'
+            )?.classList.remove('tf-open');
             return;
         }
 
+        const headerXPRates =
+            getActivityXPRateSnapshot();
+
         const xp =
-            activityEstimatedXPPerHour ===
-                null
-                ? '—'
-                : Math.round(
-                    activityEstimatedXPPerHour
-                ).toLocaleString();
+            settings.actualVsTheoreticalXPEnabled
+                ? formatRate(
+                    headerXPRates.theoretical
+                )
+                : (
+                    activityEstimatedXPPerHour ===
+                        null
+                        ? '—'
+                        : Math.round(
+                            activityEstimatedXPPerHour
+                        ).toLocaleString()
+                );
 
         const items =
             activityEstimatedItemsPerHour ===
@@ -10003,15 +12598,7 @@
 
         const queueText =
             queueEstimate
-                ? (
-                    activityQueueRemainingElement
-                        .textContent !== '—'
-                        ? activityQueueRemainingElement
-                            .textContent
-                        : formatDuration(
-                            queueEstimate.seconds
-                        )
-                )
+                ? `${formatDuration(queueEstimate.seconds)} · Ends ${formatQueueFinishClock(queueEstimate.seconds)}`
                 : '—';
 
         setTextIfChanged(
@@ -10086,6 +12673,22 @@
             ),
             `${titleCaseSkill(activitySkill)} • ${activityTaskName}`
         );
+
+        if (
+            document.getElementById(
+                'tf-header-xp-tooltip'
+            )?.classList.contains('tf-open')
+        ) {
+            renderActivityXPRateTooltip();
+        }
+
+        if (
+            document.getElementById(
+                'tf-header-queue-tooltip'
+            )?.classList.contains('tf-open')
+        ) {
+            renderQueueCompletionTooltip();
+        }
     }
 
     function applyActivitySessionLayout() {
@@ -10132,12 +12735,14 @@
         toggle.addEventListener(
             'click',
             () => {
+                const nextValue =
+                    !settings[
+                        settingKey
+                    ];
 
                 updateSetting(
                     settingKey,
-                    !settings[
-                        settingKey
-                    ]
+                    nextValue
                 );
             }
         );
@@ -10905,6 +13510,64 @@
         combatGroup.appendChild(
             createSettingsCard({
                 title:
+                    'Combat Damage Tracker',
+
+                description:
+                    'Show live observed DPS in the PvE header. Click DPS to open average hit, minimum hit, maximum hit, total damage, hits, misses, and accuracy for the current combat session.',
+
+                toggleKey:
+                    'combatDamageTrackerEnabled'
+            })
+        );
+
+        combatGroup.appendChild(
+            createSettingsCard({
+                title:
+                    'Combat Session History',
+
+                description:
+                    'Save the last 20 completed PvE sessions with duration, kills, XP, net gold, net gold per hour, and XP per hour. Open History from the PvE tracker or click PvE in header mode.',
+
+                toggleKey:
+                    'combatSessionHistoryEnabled',
+
+                extraContent:
+                    cardBody => {
+                        const row =
+                            document.createElement(
+                                'div'
+                            );
+
+                        row.className =
+                            'tf-firstmate-select-row';
+                        row.dataset.parentToggle =
+                            'combatSessionHistoryEnabled';
+
+                        const button =
+                            document.createElement(
+                                'button'
+                            );
+
+                        button.type = 'button';
+                        button.className =
+                            'tf-firstmate-refresh-button';
+                        button.textContent =
+                            'VIEW HISTORY';
+
+                        button.addEventListener(
+                            'click',
+                            openCombatSessionHistory
+                        );
+
+                        row.appendChild(button);
+                        cardBody.appendChild(row);
+                    }
+            })
+        );
+
+        combatGroup.appendChild(
+            createSettingsCard({
+                title:
                     'Combat Warnings',
 
                 description:
@@ -11169,10 +13832,62 @@
                     'Queue Remaining',
 
                 description:
-                    'Show estimated remaining time for queued activities in the Activity Session panel.',
+                    'Show estimated remaining time and the projected queue end time in the Activity Session header.',
 
                 toggleKey:
                     'activityQueueRemaining'
+            })
+        );
+
+        activityGroup.appendChild(
+            createSettingsCard({
+                title:
+                    'Queue Completion Details',
+
+                description:
+                    'Hover Queue in the Activity header to see each active and queued activity with its projected completion time.',
+
+                toggleKey:
+                    'queueCompletionDetailsEnabled'
+            })
+        );
+
+        activityGroup.appendChild(
+            createSettingsCard({
+                title:
+                    'Actual vs Theoretical XP/hr',
+
+                description:
+                    'Compare the recipe and current-modifier XP rate against the XP rate actually observed during this session. Hover XP/H in header mode for the comparison.',
+
+                toggleKey:
+                    'actualVsTheoreticalXPEnabled'
+            })
+        );
+
+        activityGroup.appendChild(
+            createSettingsCard({
+                title:
+                    'Rolling XP Rates',
+
+                description:
+                    'Track observed XP per hour over rolling 5-minute, 15-minute, and 1-hour windows. Hover XP/H in header mode to view them.',
+
+                toggleKey:
+                    'rollingXPRatesEnabled'
+            })
+        );
+
+        activityGroup.appendChild(
+            createSettingsCard({
+                title:
+                    'Queue Finished Notification',
+
+                description:
+                    'Show a First Mate in-game warning when the full activity queue finishes. Uses the same warning style as Low Hull and stays visible until clicked.',
+
+                toggleKey:
+                    'queueFinishedNotificationEnabled'
             })
         );
 
@@ -11540,6 +14255,38 @@
                 'none';
         }
 
+        const combatDamageTrackerEnabledNow =
+            Boolean(settings.combatDamageTrackerEnabled);
+
+        if (
+            combatDamageTrackerEnabledNow !==
+            combatDamageTrackerLastEnabled
+        ) {
+            /* Start with a clean baseline whenever the live damage tracker is
+             * toggled. This prevents combat-log lines created while disabled
+             * from being counted as new damage when it is enabled again. */
+            resetCombatDamageSession();
+            combatDamageTrackerLastEnabled =
+                combatDamageTrackerEnabledNow;
+        }
+
+        if (!combatDamageTrackerEnabledNow) {
+            closeDamageWindow();
+        }
+
+        setDisplayIfChanged(
+            combatHistoryButton,
+            settings.combatSessionHistoryEnabled
+                ? ''
+                : 'none'
+        );
+
+        if (
+            !settings.combatSessionHistoryEnabled
+        ) {
+            closeCombatSessionHistory();
+        }
+
         if (
             !settings
                 .combatWarningsEnabled
@@ -11565,6 +14312,15 @@
         ) {
             resetActivitySession(
                 true
+            );
+        }
+
+        if (
+            !settings.queueFinishedNotificationEnabled
+        ) {
+            clearQueueNotificationState();
+            queueFinishedToast.classList.remove(
+                'tf-open'
             );
         }
 
@@ -11891,6 +14647,16 @@
     );
 
     makePanelDraggable(
+        damageWindow,
+        damageWindowHeader
+    );
+
+    makePanelDraggable(
+        combatHistoryWindow,
+        combatHistoryHeader
+    );
+
+    makePanelDraggable(
         queueDebugPanel,
         queueDebugHeader
     );
@@ -11955,6 +14721,45 @@
     let combatObserverTimer =
         null;
 
+    function processDamageEntriesFromMutation(mutation) {
+        if (
+            !settings.combatTrackerEnabled ||
+            !settings.combatDamageTrackerEnabled
+        ) {
+            return;
+        }
+
+        const candidates = new Set();
+
+        const addCandidate = node => {
+            if (!(node instanceof Element)) return;
+
+            const damageSelector =
+                '.log-entry.log-combat.combat-row--outgoing-hit[data-sent-at], ' +
+                '.log-entry.log-combat.combat-row--miss[data-sent-at]';
+
+            if (node.matches?.(damageSelector)) {
+                candidates.add(node);
+            }
+
+            node.querySelectorAll?.(damageSelector)
+                .forEach(entry => candidates.add(entry));
+
+            const parentEntry =
+                node.closest?.(damageSelector);
+            if (parentEntry) candidates.add(parentEntry);
+        };
+
+        if (mutation.type === 'characterData') {
+            addCandidate(mutation.target?.parentElement);
+        } else {
+            addCandidate(mutation.target);
+            mutation.addedNodes?.forEach(addCandidate);
+        }
+
+        candidates.forEach(processDamageEvent);
+    }
+
     const combatObserver =
         new MutationObserver(
             mutations => {
@@ -11965,6 +14770,13 @@
                 ) {
                     return;
                 }
+
+                /* Capture transient outgoing damage immediately. A one-shot
+                 * victory can cause Tidefall to replace/remove the combat-log
+                 * node before the normal debounced scan runs. */
+                mutations.forEach(
+                    processDamageEntriesFromMutation
+                );
 
                 if (combatObserverTimer !== null) {
                     return;
@@ -12150,6 +14962,13 @@
         250
     );
 
+    window.addEventListener(
+        'pagehide',
+        () => {
+            archiveCombatSession();
+        }
+    );
+
     // =========================================================
     // INITIALIZE
     // =========================================================
@@ -12163,6 +14982,8 @@
     combatKills = 0;
     combatTotalXP = 0;
     combatGrossGold = 0;
+    combatSessionStartedAt = 0;
+    combatHistoryArchivedCurrentSession = false;
 
     consumedItems.clear();
     sessionPrices.clear();
