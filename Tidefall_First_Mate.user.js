@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.8.6
+// @version      1.8.6.1
 // @description  Combat tracker, combat warnings, activity tracker, mastery-aware item rates, market pricing, and First Mate's Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -24,8 +24,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.8.6';
-    const FIRST_MATE_BUILD_ID = '2026-08-08-official-consumables';
+    const FIRST_MATE_VERSION = '1.8.6.1';
+    const FIRST_MATE_BUILD_ID = '2026-08-12-performance-fix';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -257,7 +257,7 @@
     const ACTIVITY_RIGHT = 158;
     const ACTIVITY_TOP = 60;
 
-    const COMBAT_SCAN_INTERVAL = 1000;
+    const COMBAT_SCAN_INTERVAL = 5000;
     const ITEM_SCAN_INTERVAL = 250;
     const ITEM_DECREASE_CONFIRM_MS = 750;
     const ITEM_TRACKING_COMBAT_GRACE_MS = 2000;
@@ -716,6 +716,138 @@
                 character =>
                     character.toUpperCase()
             );
+    }
+
+
+    // =========================================================
+    // LOW-OVERHEAD DOM HELPERS
+    // =========================================================
+
+    /*
+     * First Mate shares Tidefall's main browser thread. Avoid creating
+     * DOM mutations when a displayed value has not actually changed.
+     * This is especially important because several observers watch the
+     * page for game updates.
+     */
+    function setTextIfChanged(
+        element,
+        value
+    ) {
+        if (!element) {
+            return false;
+        }
+
+        const next =
+            String(value);
+
+        if (element.textContent === next) {
+            return false;
+        }
+
+        element.textContent =
+            next;
+
+        return true;
+    }
+
+    function setDisplayIfChanged(
+        element,
+        value
+    ) {
+        if (
+            !element ||
+            element.style.display === value
+        ) {
+            return false;
+        }
+
+        element.style.display =
+            value;
+
+        return true;
+    }
+
+    function setClassEnabled(
+        element,
+        className,
+        enabled
+    ) {
+        if (!element) {
+            return false;
+        }
+
+        const shouldEnable =
+            Boolean(enabled);
+
+        if (
+            element.classList.contains(
+                className
+            ) === shouldEnable
+        ) {
+            return false;
+        }
+
+        element.classList.toggle(
+            className,
+            shouldEnable
+        );
+
+        return true;
+    }
+
+    const FIRST_MATE_OWNED_SELECTOR = [
+        '#tf-pve-panel',
+        '#tf-cost-window',
+        '#tf-activity-panel',
+        '#tf-queue-debug',
+        '#tf-idle-warning',
+        '#tf-combat-warning',
+        '#tf-price-warning',
+        '#tf-activity-header-layout',
+        '#tf-combat-header-layout',
+        '#tf-firstmate-settings-section',
+        '#tf-firstmate-settings-tab'
+    ].join(',');
+
+    function isFirstMateOwnedNode(
+        node
+    ) {
+        const element =
+            node?.nodeType === 1
+                ? node
+                : node?.parentElement;
+
+        return Boolean(
+            element?.closest?.(
+                FIRST_MATE_OWNED_SELECTOR
+            )
+        );
+    }
+
+    function hasNonFirstMateMutation(
+        mutations
+    ) {
+        return mutations.some(
+            mutation => {
+                if (
+                    !isFirstMateOwnedNode(
+                        mutation.target
+                    )
+                ) {
+                    return true;
+                }
+
+                return [
+                    ...mutation.addedNodes,
+                    ...mutation.removedNodes
+                ].some(
+                    node =>
+                        !isFirstMateOwnedNode(
+                            node
+                        )
+                );
+            }
+        );
     }
 
     // =========================================================
@@ -5344,28 +5476,38 @@
     function updateCostWindowDisplay(
         net
     ) {
-        costGrossElement.textContent =
+        setTextIfChanged(
+            costGrossElement,
             `+${Math.round(
                 combatGrossGold
-            ).toLocaleString()}`;
+            ).toLocaleString()}`
+        );
 
-        costAmmoElement.textContent =
+        setTextIfChanged(
+            costAmmoElement,
             `-${Math.round(
                 getAmmoCost()
-            ).toLocaleString()}`;
+            ).toLocaleString()}`
+        );
 
-        costFoodElement.textContent =
+        setTextIfChanged(
+            costFoodElement,
             `-${Math.round(
                 getFoodCost()
-            ).toLocaleString()}`;
+            ).toLocaleString()}`
+        );
 
-        costRepairsElement.textContent =
+        setTextIfChanged(
+            costRepairsElement,
             `-${Math.round(
                 getRepairCost()
-            ).toLocaleString()}`;
+            ).toLocaleString()}`
+        );
 
-        costNetElement.textContent =
-            net.toLocaleString();
+        setTextIfChanged(
+            costNetElement,
+            net.toLocaleString()
+        );
     }
 
     function openCostWindow() {
@@ -5400,30 +5542,38 @@
     }
 
     function updateCombatDisplay() {
-        killsElement.textContent =
-            combatKills.toLocaleString();
+        setTextIfChanged(
+            killsElement,
+            combatKills.toLocaleString()
+        );
 
-        xpGainedElement.textContent =
-            combatTotalXP.toLocaleString();
+        setTextIfChanged(
+            xpGainedElement,
+            combatTotalXP.toLocaleString()
+        );
 
         const level =
             getSkillLevel(
                 'gunnery'
             );
 
-        killsLevelLabel.textContent =
+        setTextIfChanged(
+            killsLevelLabel,
             level !== null
                 ? `Kills to Level ${level + 1}`
-                : 'Kills to Level';
+                : 'Kills to Level'
+        );
 
         const killsRemaining =
             getKillsToLevel();
 
-        killsToLevelElement.textContent =
+        setTextIfChanged(
+            killsToLevelElement,
             killsRemaining === null
                 ? '—'
                 : killsRemaining
-                    .toLocaleString();
+                    .toLocaleString()
+        );
 
         const net =
             Math.round(
@@ -5431,20 +5581,43 @@
                 getConsumableCost()
             );
 
-        netGoldElement.childNodes[0].textContent =
+        const netText =
             `${net.toLocaleString()} `;
+
+        if (
+            netGoldElement.childNodes[0] &&
+            netGoldElement.childNodes[0]
+                .textContent !== netText
+        ) {
+            netGoldElement.childNodes[0]
+                .textContent =
+                netText;
+        }
 
         updateCostWindowDisplay(
             net
         );
 
-        netGoldElement.title =
+        const nextTitle =
             [
                 `Gold earned: ${Math.round(combatGrossGold).toLocaleString()}`,
                 `Consumables: -${Math.round(getConsumableCost()).toLocaleString()}`,
                 `Net gold: ${net.toLocaleString()}`
             ].join('\n');
 
+        if (
+            netGoldElement.title !==
+            nextTitle
+        ) {
+            netGoldElement.title =
+                nextTitle;
+        }
+
+        /*
+         * This is the single once-per-second header refresh. The old
+         * build also scheduled both header functions independently,
+         * causing three overlapping 1-second render paths.
+         */
         updateCombatHeaderLayout();
     }
 
@@ -6626,6 +6799,9 @@
                             !(
                                 node instanceof
                                 HTMLElement
+                            ) ||
+                            isFirstMateOwnedNode(
+                                node
                             )
                         ) {
                             continue;
@@ -7994,19 +8170,36 @@
             const currentCountdown =
                 getActivityCycleCountdown();
 
-            for (
-                let index = 0;
-                index < currentCycles;
-                index += 1
-            ) {
+            const cyclesNeeded =
+                Math.ceil(
+                    remainingXP /
+                    activityEstimatedXPPerAction
+                );
+
+            const cyclesUsed =
+                Math.min(
+                    currentCycles,
+                    cyclesNeeded
+                );
+
+            if (cyclesUsed > 0) {
                 totalSeconds +=
-                    index === 0 &&
-                    Number.isFinite(currentCountdown) &&
-                    currentCountdown >= 0
-                        ? currentCountdown
-                        : activityCycleSeconds;
+                    (
+                        Number.isFinite(
+                            currentCountdown
+                        ) &&
+                        currentCountdown >= 0
+                            ? currentCountdown
+                            : activityCycleSeconds
+                    ) +
+                    Math.max(
+                        0,
+                        cyclesUsed - 1
+                    ) *
+                    activityCycleSeconds;
 
                 remainingXP -=
+                    cyclesUsed *
                     activityEstimatedXPPerAction;
 
                 if (remainingXP <= 0) {
@@ -8061,20 +8254,35 @@
                     ? stats.cycleSeconds
                     : activityCycleSeconds;
 
-            for (
-                let index = 0;
-                index < cycles;
-                index += 1
-            ) {
-                totalSeconds +=
-                    secondsPerCycle;
+            /*
+             * The previous implementation iterated once for every queued
+             * cycle. Large crafting queues could therefore execute tens of
+             * thousands of loop iterations every display refresh.
+             */
+            const cyclesNeeded =
+                xpPerAction > 0
+                    ? Math.ceil(
+                        remainingXP /
+                        xpPerAction
+                    )
+                    : cycles;
 
-                remainingXP -=
-                    xpPerAction;
+            const cyclesUsed =
+                Math.min(
+                    cycles,
+                    cyclesNeeded
+                );
 
-                if (remainingXP <= 0) {
-                    return totalSeconds;
-                }
+            totalSeconds +=
+                cyclesUsed *
+                secondsPerCycle;
+
+            remainingXP -=
+                cyclesUsed *
+                xpPerAction;
+
+            if (remainingXP <= 0) {
+                return totalSeconds;
             }
         }
 
@@ -8149,6 +8357,16 @@
         queueDebugLatestText =
             nextText;
 
+        /*
+         * Keep the latest debug snapshot in memory, but do not mutate
+         * the hidden developer panel while the debugger is disabled.
+         * The old behavior produced a changing hidden DOM write every
+         * second during queued activities.
+         */
+        if (!settings.queueDebuggerEnabled) {
+            return;
+        }
+
         if (queueDebugPaused) {
             return;
         }
@@ -8166,13 +8384,10 @@
         queueDebugLastUpdateAt =
             now;
 
-        if (
-            queueDebugContent.textContent !==
+        setTextIfChanged(
+            queueDebugContent,
             nextText
-        ) {
-            queueDebugContent.textContent =
-                nextText;
-        }
+        );
     }
 
     function getQueueRemainingEstimate() {
@@ -8517,11 +8732,15 @@
         if (
             !settings.activityQueueRemaining
         ) {
-            activityQueueRow.style.display =
-                'none';
+            setDisplayIfChanged(
+                activityQueueRow,
+                'none'
+            );
 
-            activityQueueRemainingElement.textContent =
-                '—';
+            setTextIfChanged(
+                activityQueueRemainingElement,
+                '—'
+            );
 
             queueCountdownSignature =
                 '';
@@ -8532,18 +8751,22 @@
             queueCountdownStartedAt =
                 0;
 
-            return;
+            return null;
         }
 
         const estimate =
             getQueueRemainingEstimate();
 
         if (!estimate) {
-            activityQueueRow.style.display =
-                'none';
+            setDisplayIfChanged(
+                activityQueueRow,
+                'none'
+            );
 
-            activityQueueRemainingElement.textContent =
-                '—';
+            setTextIfChanged(
+                activityQueueRemainingElement,
+                '—'
+            );
 
             queueCountdownSignature =
                 '';
@@ -8557,7 +8780,7 @@
             queueCountdownApproximate =
                 false;
 
-            return;
+            return null;
         }
 
         /*
@@ -8598,11 +8821,15 @@
             );
 
         if (remainingSeconds <= 0) {
-            activityQueueRow.style.display =
-                'none';
+            setDisplayIfChanged(
+                activityQueueRow,
+                'none'
+            );
 
-            activityQueueRemainingElement.textContent =
-                '—';
+            setTextIfChanged(
+                activityQueueRemainingElement,
+                '—'
+            );
 
             /*
              * The old queue row can remain in Tidefall's DOM
@@ -8625,16 +8852,22 @@
             queueCountdownApproximate =
                 false;
 
-            return;
+            return null;
         }
 
-        activityQueueRow.style.display =
-            'grid';
+        setDisplayIfChanged(
+            activityQueueRow,
+            'grid'
+        );
 
-        activityQueueRemainingElement.textContent =
+        setTextIfChanged(
+            activityQueueRemainingElement,
             formatDuration(
                 remainingSeconds
-            );
+            )
+        );
+
+        return estimate;
     }
 
     // =========================================================
@@ -8644,7 +8877,9 @@
 
     function updateActivityDisplay() {
         updateActivityLevelEstimate();
-        updateQueueRemainingDisplay();
+
+        const queueEstimate =
+            updateQueueRemainingDisplay();
 
         if (
             !settings
@@ -8652,8 +8887,10 @@
             !activityStarted ||
             activityPanelClosed
         ) {
-            activityPanel.style.display =
-                'none';
+            setDisplayIfChanged(
+                activityPanel,
+                'none'
+            );
 
             return;
         }
@@ -8662,32 +8899,42 @@
             settings.activitySessionLayout ===
                 'header'
         ) {
-            activityPanel.style.display =
-                'none';
+            setDisplayIfChanged(
+                activityPanel,
+                'none'
+            );
 
-            updateActivityHeaderLayout();
+            updateActivityHeaderLayout(
+                queueEstimate
+            );
 
             return;
         }
 
-        activityPanel.style.display =
-            'block';
+        setDisplayIfChanged(
+            activityPanel,
+            'block'
+        );
 
-        activityXpHourElement.textContent =
+        setTextIfChanged(
+            activityXpHourElement,
             activityEstimatedXPPerHour ===
                 null
                 ? '—'
                 : Math.round(
                     activityEstimatedXPPerHour
-                ).toLocaleString();
+                ).toLocaleString()
+        );
 
-        activityItemsHourElement.textContent =
+        setTextIfChanged(
+            activityItemsHourElement,
             activityEstimatedItemsPerHour ===
                 null
                 ? '—'
                 : Math.round(
                     activityEstimatedItemsPerHour
-                ).toLocaleString();
+                ).toLocaleString()
+        );
 
         if (
             settings
@@ -8701,7 +8948,8 @@
                 settings.activityLevelMode ===
                     'time_queue';
 
-            activityLevelLabel.textContent =
+            setTextIfChanged(
+                activityLevelLabel,
                 activityEstimatedNextLevel !==
                     null
                     ? `${includesQueue ? 'Queued Time' : 'Time'} to Level ${activityEstimatedNextLevel}`
@@ -8709,40 +8957,46 @@
                         includesQueue
                             ? 'Queued Time to Level'
                             : 'Time to Level'
-                    );
+                    )
+            );
 
             const liveTimeToLevel =
                 includesQueue
                     ? getQueuedTimeToLevelEstimate()
                     : getLiveActivityTimeToLevel();
 
-            activityLevelValue.textContent =
+            setTextIfChanged(
+                activityLevelValue,
                 liveTimeToLevel ===
                     null
                     ? '—'
                     : formatDuration(
                         liveTimeToLevel
-                    );
+                    )
+            );
         } else {
-            activityLevelLabel.textContent =
+            setTextIfChanged(
+                activityLevelLabel,
                 activityEstimatedNextLevel !==
                     null
                     ? `Actions to Level ${activityEstimatedNextLevel}`
-                    : 'Actions to Level';
+                    : 'Actions to Level'
+            );
 
-            activityLevelValue.textContent =
+            setTextIfChanged(
+                activityLevelValue,
                 activityEstimatedActionsToLevel ===
                     null
                     ? '—'
                     : activityEstimatedActionsToLevel
-                        .toLocaleString();
+                        .toLocaleString()
+            );
         }
 
-
-        activitySkillElement.textContent =
-            `${titleCaseSkill(activitySkill)} • ${activityTaskName}`;
-
-        updateActivityHeaderLayout();
+        setTextIfChanged(
+            activitySkillElement,
+            `${titleCaseSkill(activitySkill)} • ${activityTaskName}`
+        );
     }
 
     // =========================================================
@@ -8754,8 +9008,10 @@
             !settings
                 .activityTrackerEnabled
         ) {
-            activityPanel.style.display =
-                'none';
+            setDisplayIfChanged(
+                activityPanel,
+                'none'
+            );
 
             return;
         }
@@ -8768,6 +9024,8 @@
              * Tidefall briefly removes the active-task DOM while
              * promoting a queued task. Keep whichever Activity layout
              * the user selected mounted during that short handoff.
+             * The once-per-second display tick continues the countdown;
+             * the 250ms scanner does not need to rerender the UI.
              */
             const preservingQueueTransition =
                 settings.activityQueueRemaining &&
@@ -8775,24 +9033,23 @@
                 queueTransitionHoldSeconds > 0;
 
             if (!preservingQueueTransition) {
-                activityPanel.style.display =
-                    'none';
+                setDisplayIfChanged(
+                    activityPanel,
+                    'none'
+                );
 
-                activityHeaderLayout
-                    ?.classList.remove(
-                        'tf-active'
-                    );
-            } else if (
-                settings.activitySessionLayout ===
-                    'header'
-            ) {
-                updateActivityHeaderLayout();
-            } else {
-                updateActivityDisplay();
+                setClassEnabled(
+                    activityHeaderLayout,
+                    'tf-active',
+                    false
+                );
             }
 
             return;
         }
+
+        let sessionChanged =
+            false;
 
         if (
             !activityStarted
@@ -8800,6 +9057,9 @@
             startActivitySession(
                 activity
             );
+
+            sessionChanged =
+                true;
         } else if (
             activity.skill !==
                 activitySkill ||
@@ -8815,6 +9075,9 @@
             startActivitySession(
                 activity
             );
+
+            sessionChanged =
+                true;
         }
 
         scanActivityCycleDuration();
@@ -8827,7 +9090,15 @@
             false
         );
 
-        updateActivityDisplay();
+        /*
+         * Sampling remains at 250ms so cycle resets and XP changes are
+         * captured reliably. Rendering is consolidated into the single
+         * 1-second display tick below, except when a new session needs
+         * to appear immediately.
+         */
+        if (sessionChanged) {
+            updateActivityDisplay();
+        }
     }
 
     // =========================================================
@@ -9321,8 +9592,11 @@
                 'header' ||
             !settings.combatTrackerEnabled
         ) {
-            combatHeaderLayout
-                ?.classList.remove('tf-active');
+            setClassEnabled(
+                combatHeaderLayout,
+                'tf-active',
+                false
+            );
 
             updateActivityHeaderLayout();
 
@@ -9336,7 +9610,8 @@
         const combatActive =
             shouldPvEOccupySharedHeader();
 
-        combatHeaderLayout.classList.toggle(
+        setClassEnabled(
+            combatHeaderLayout,
             'tf-active',
             combatActive
         );
@@ -9364,34 +9639,44 @@
                 getConsumableCost()
             );
 
-        combatHeaderLayout.querySelector(
-            '#tf-header-combat-kills'
-        ).textContent =
-            combatKills.toLocaleString();
+        setTextIfChanged(
+            combatHeaderLayout.querySelector(
+                '#tf-header-combat-kills'
+            ),
+            combatKills.toLocaleString()
+        );
 
-        combatHeaderLayout.querySelector(
-            '#tf-header-combat-xp'
-        ).textContent =
-            combatTotalXP.toLocaleString();
+        setTextIfChanged(
+            combatHeaderLayout.querySelector(
+                '#tf-header-combat-xp'
+            ),
+            combatTotalXP.toLocaleString()
+        );
 
-        combatHeaderLayout.querySelector(
-            '#tf-header-combat-level-label'
-        ).textContent =
+        setTextIfChanged(
+            combatHeaderLayout.querySelector(
+                '#tf-header-combat-level-label'
+            ),
             level !== null
                 ? `Kills to Level ${level + 1}`
-                : 'Kills to Level';
+                : 'Kills to Level'
+        );
 
-        combatHeaderLayout.querySelector(
-            '#tf-header-combat-level'
-        ).textContent =
+        setTextIfChanged(
+            combatHeaderLayout.querySelector(
+                '#tf-header-combat-level'
+            ),
             killsRemaining === null
                 ? '—'
-                : killsRemaining.toLocaleString();
+                : killsRemaining.toLocaleString()
+        );
 
-        combatHeaderLayout.querySelector(
-            '#tf-header-combat-gold'
-        ).textContent =
-            net.toLocaleString();
+        setTextIfChanged(
+            combatHeaderLayout.querySelector(
+                '#tf-header-combat-gold'
+            ),
+            net.toLocaleString()
+        );
     }
 
     function applyCombatSessionLayout() {
@@ -9426,7 +9711,16 @@
     let activityHeaderLayout =
         null;
 
+    let tidefallTopHeaderCache =
+        null;
+
     function findTidefallTopHeader() {
+        if (
+            tidefallTopHeaderCache?.isConnected
+        ) {
+            return tidefallTopHeaderCache;
+        }
+
         const candidates =
             Array.from(
                 document.querySelectorAll(
@@ -9434,37 +9728,40 @@
                 )
             );
 
-        return candidates.find(
-            element => {
-                const text =
-                    element.textContent
-                        ?.replace(/\s+/g, ' ')
-                        .trim()
-                        .toUpperCase() || '';
+        tidefallTopHeaderCache =
+            candidates.find(
+                element => {
+                    const text =
+                        element.textContent
+                            ?.replace(/\s+/g, ' ')
+                            .trim()
+                            .toUpperCase() || '';
 
-                if (
-                    !text.includes(
-                        'SAILORS ONLINE'
-                    ) ||
-                    !text.includes(
-                        'SAILED TODAY'
-                    )
-                ) {
-                    return false;
+                    if (
+                        !text.includes(
+                            'SAILORS ONLINE'
+                        ) ||
+                        !text.includes(
+                            'SAILED TODAY'
+                        )
+                    ) {
+                        return false;
+                    }
+
+                    const rect =
+                        element.getBoundingClientRect();
+
+                    return (
+                        rect.top <= 5 &&
+                        rect.height > 30 &&
+                        rect.height < 120 &&
+                        rect.width >
+                            window.innerWidth * .7
+                    );
                 }
+            ) || null;
 
-                const rect =
-                    element.getBoundingClientRect();
-
-                return (
-                    rect.top <= 5 &&
-                    rect.height > 30 &&
-                    rect.height < 120 &&
-                    rect.width >
-                        window.innerWidth * .7
-                );
-            }
-        ) || null;
+        return tidefallTopHeaderCache;
     }
 
     function buildActivityHeaderLayout() {
@@ -9547,15 +9844,37 @@
         return true;
     }
 
-    function updateActivityHeaderLayout() {
+    function updateActivityHeaderLayout(
+        queueEstimateOverride
+    ) {
         if (
             settings.activitySessionLayout !==
                 'header'
         ) {
-            activityHeaderLayout
-                ?.classList.remove(
-                    'tf-active'
-                );
+            setClassEnabled(
+                activityHeaderLayout,
+                'tf-active',
+                false
+            );
+
+            return;
+        }
+
+        /*
+         * Do not mount or scan the page header when there is no Activity
+         * session to show. The old build did this once or several times
+         * every second even while idle.
+         */
+        if (
+            !settings.activityTrackerEnabled ||
+            !activityStarted ||
+            activityPanelClosed
+        ) {
+            setClassEnabled(
+                activityHeaderLayout,
+                'tf-active',
+                false
+            );
 
             return;
         }
@@ -9590,13 +9909,14 @@
             );
 
         /*
-         * Read queue state before deciding header visibility.
-         * A promoted queued task starts a fresh activity session
-         * with zero completed actions, but the header must remain
-         * visible through that handoff.
+         * Reuse the queue estimate already calculated by
+         * updateActivityDisplay() when available.
          */
         const queueEstimate =
-            getQueueRemainingEstimate();
+            queueEstimateOverride !==
+                undefined
+                ? queueEstimateOverride
+                : getQueueRemainingEstimate();
 
         const preservingQueueTransition =
             Boolean(
@@ -9605,14 +9925,6 @@
                 queueTransitionHoldSeconds > 0
             );
 
-        /*
-         * Keep the tracker visible as soon as an activity is active,
-         * even before its first completed action. This prevents the
-         * header from closing when a queue promotes its final item and
-         * Queue Remaining correctly disappears. Historical rates are
-         * shown immediately when available; otherwise placeholders remain
-         * until the first action completes.
-         */
         const visible =
             settings.activityTrackerEnabled &&
             activityStarted &&
@@ -9623,7 +9935,8 @@
             ) &&
             !combatHasHeaderPriority;
 
-        activityHeaderLayout.classList.toggle(
+        setClassEnabled(
+            activityHeaderLayout,
             'tf-active',
             visible
         );
@@ -9690,23 +10003,35 @@
 
         const queueText =
             queueEstimate
-                ? activityQueueRemainingElement
-                    .textContent
+                ? (
+                    activityQueueRemainingElement
+                        .textContent !== '—'
+                        ? activityQueueRemainingElement
+                            .textContent
+                        : formatDuration(
+                            queueEstimate.seconds
+                        )
+                )
                 : '—';
 
-        activityHeaderLayout.querySelector(
-            '#tf-header-xp'
-        ).textContent =
-            xp;
+        setTextIfChanged(
+            activityHeaderLayout.querySelector(
+                '#tf-header-xp'
+            ),
+            xp
+        );
 
-        activityHeaderLayout.querySelector(
-            '#tf-header-items'
-        ).textContent =
-            items;
+        setTextIfChanged(
+            activityHeaderLayout.querySelector(
+                '#tf-header-items'
+            ),
+            items
+        );
 
-        activityHeaderLayout.querySelector(
-            '#tf-header-level-label'
-        ).textContent =
+        setTextIfChanged(
+            activityHeaderLayout.querySelector(
+                '#tf-header-level-label'
+            ),
             settings.activityLevelMode ===
                 'time' ||
             settings.activityLevelMode ===
@@ -9725,34 +10050,42 @@
                     nextLevel !== null
                         ? `Actions to Level ${nextLevel}`
                         : 'Actions to Level'
-                );
+                )
+        );
 
-        activityHeaderLayout.querySelector(
-            '#tf-header-level'
-        ).textContent =
-            levelValue;
+        setTextIfChanged(
+            activityHeaderLayout.querySelector(
+                '#tf-header-level'
+            ),
+            levelValue
+        );
 
         const queueStat =
             activityHeaderLayout.querySelector(
                 '[data-kind="queue"]'
             );
 
-        queueStat.style.display =
+        setDisplayIfChanged(
+            queueStat,
             settings.activityQueueRemaining &&
             queueEstimate
                 ? 'flex'
-                : 'none';
+                : 'none'
+        );
 
-        activityHeaderLayout.querySelector(
-            '#tf-header-queue'
-        ).textContent =
-            queueText;
+        setTextIfChanged(
+            activityHeaderLayout.querySelector(
+                '#tf-header-queue'
+            ),
+            queueText
+        );
 
-
-        activityHeaderLayout.querySelector(
-            '#tf-header-task'
-        ).textContent =
-            `${titleCaseSkill(activitySkill)} • ${activityTaskName}`;
+        setTextIfChanged(
+            activityHeaderLayout.querySelector(
+                '#tf-header-task'
+            ),
+            `${titleCaseSkill(activitySkill)} • ${activityTaskName}`
+        );
     }
 
     function applyActivitySessionLayout() {
@@ -11577,7 +11910,15 @@
 
     const accountObserver =
         new MutationObserver(
-            () => {
+            mutations => {
+                if (
+                    !hasNonFirstMateMutation(
+                        mutations
+                    )
+                ) {
+                    return;
+                }
+
                 if (accountObserverTimer !== null) {
                     return;
                 }
@@ -11616,7 +11957,15 @@
 
     const combatObserver =
         new MutationObserver(
-            () => {
+            mutations => {
+                if (
+                    !hasNonFirstMateMutation(
+                        mutations
+                    )
+                ) {
+                    return;
+                }
+
                 if (combatObserverTimer !== null) {
                     return;
                 }
@@ -11745,8 +12094,26 @@
         MARKET_SCAN_INTERVAL
     );
 
+    /*
+     * One consolidated 1-second UI tick. The old build scheduled
+     * updateCombatDisplay(), updateActivityDisplay(),
+     * updateActivityHeaderLayout(), and updateCombatHeaderLayout()
+     * on overlapping 1-second intervals. Their work landed in the
+     * same frame and produced the visible once-per-second hitch.
+     */
     setInterval(
-        updateCombatDisplay,
+        () => {
+            updateCombatDisplay();
+
+            if (
+                settings.activityTrackerEnabled &&
+                activityStarted &&
+                settings.activitySessionLayout ===
+                    'standard'
+            ) {
+                updateActivityDisplay();
+            }
+        },
         DISPLAY_INTERVAL
     );
 
@@ -11763,31 +12130,6 @@
     setInterval(
         scanActivity,
         ACTIVITY_SCAN_INTERVAL
-    );
-
-    setInterval(
-        () => {
-            if (
-                (
-                    settings.activityLevelMode === 'time' ||
-                    settings.activityLevelMode === 'time_queue'
-                ) &&
-                settings.activitySessionLayout === 'standard'
-            ) {
-                updateActivityDisplay();
-            }
-        },
-        1000
-    );
-
-    setInterval(
-        updateActivityHeaderLayout,
-        1000
-    );
-
-    setInterval(
-        updateCombatHeaderLayout,
-        1000
     );
 
     setInterval(
