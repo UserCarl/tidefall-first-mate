@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.9.5
+// @version      1.9.6
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history, and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -25,8 +25,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.9.5';
-    const FIRST_MATE_BUILD_ID = '2026-08-16-heal-timing-glow';
+    const FIRST_MATE_VERSION = '1.9.6';
+    const FIRST_MATE_BUILD_ID = '2026-08-16-heal-glow-waste-fix';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -5531,6 +5531,82 @@
     const HEAL_GLOW_ENTER_PCT = 60;    // % and below: glow turns on
     const HEAL_GLOW_CRITICAL_PCT = 25; // % and below: always red, regardless of overheal
 
+    // Tidefall's "quick heal" keeps auto-consuming the item until you're
+    // topped off, so a single click can burn through several items --
+    // only the LAST one in that chain can be partially wasted, by
+    // (healPerUse - (missing % healPerUse)). Green requires that waste to
+    // be small relative to the item's own value, not just "does one item
+    // fit" -- missing=301 against a 300-value kit still burns a second
+    // kit and wastes 299 of it, which the old "does it fit" check missed.
+    const HEAL_GLOW_WASTE_MAX_PCT = 15; // waste at/below this % of one item's value -> green
+
+    // Same danger-override logic Combat Tracker uses: look at how hard the
+    // enemy's recent hits actually were, and force red if the worst one
+    // (within the last INCOMING_HIT_MAX_AGE_MS) could bring you to 0 or
+    // below on the next volley -- regardless of the flat % cutoff above.
+    // Hits are time-limited so a big critical from a fight that's long
+    // over doesn't keep this stuck on.
+    const INCOMING_HIT_LOOKBACK = 5;
+    const INCOMING_HIT_MAX_AGE_MS = 30000;
+
+    const INCOMING_HIT_SELECTOR =
+        '.log-entry.log-combat.combat-row--incoming-hit[data-sent-at], ' +
+        '.log-entry.log-combat.combat-row--incoming-critical[data-sent-at]';
+
+    function getWorstRecentIncomingHit() {
+        const now = Date.now();
+
+        const recentEntries =
+            Array.from(
+                document.querySelectorAll(
+                    INCOMING_HIT_SELECTOR
+                )
+            ).slice(-INCOMING_HIT_LOOKBACK);
+
+        let worstHull = 0;
+        let worstCrew = 0;
+
+        recentEntries.forEach(
+            entry => {
+                const sentAt =
+                    Number(entry.dataset.sentAt);
+
+                if (
+                    !Number.isFinite(sentAt) ||
+                    now - sentAt > INCOMING_HIT_MAX_AGE_MS
+                ) {
+                    return;
+                }
+
+                const hullEl =
+                    entry.querySelector('.combat-val--hull');
+
+                const crewEl =
+                    entry.querySelector('.combat-val--crew');
+
+                const hull =
+                    hullEl
+                        ? parseInt(hullEl.textContent, 10)
+                        : NaN;
+
+                const crew =
+                    crewEl
+                        ? parseInt(crewEl.textContent, 10)
+                        : NaN;
+
+                if (!Number.isNaN(hull)) {
+                    worstHull = Math.max(worstHull, hull);
+                }
+
+                if (!Number.isNaN(crew)) {
+                    worstCrew = Math.max(worstCrew, crew);
+                }
+            }
+        );
+
+        return { worstHull, worstCrew };
+    }
+
     const HEAL_GLOW_CLASSES = [
         'tf-heal-glow-green',
         'tf-heal-glow-yellow',
@@ -5668,7 +5744,7 @@
             : fallback;
     }
 
-    function computeHealGlowState(currentMax, healPerUse) {
+    function computeHealGlowState(currentMax, healPerUse, worstIncomingHit) {
         if (!currentMax) {
             return null;
         }
@@ -5683,14 +5759,33 @@
         const pct =
             (currentMax.current / currentMax.max) * 100;
 
-        if (pct <= HEAL_GLOW_CRITICAL_PCT) {
+        const inDanger =
+            worstIncomingHit > 0 &&
+            currentMax.current - worstIncomingHit <= 0;
+
+        if (inDanger || pct <= HEAL_GLOW_CRITICAL_PCT) {
             return 'red'; // heal now or risk dying, regardless of waste
         }
 
         if (pct <= HEAL_GLOW_ENTER_PCT) {
-            return missing >= healPerUse
-                ? 'green'   // healing now uses the full item, no waste
-                : 'yellow'; // low-ish, but healing now would overheal a bit
+            if (healPerUse <= 0) {
+                return 'yellow';
+            }
+
+            const remainder =
+                missing % healPerUse;
+
+            const overheal =
+                remainder === 0
+                    ? 0
+                    : healPerUse - remainder;
+
+            const wastePct =
+                (overheal / healPerUse) * 100;
+
+            return wastePct <= HEAL_GLOW_WASTE_MAX_PCT
+                ? 'green'   // quick-heal chain ends on (or very near) a full item, minimal waste
+                : 'yellow'; // the chain's last item would be significantly overhealed
         }
 
         return null; // healthy, no need yet
@@ -5733,6 +5828,9 @@
             return;
         }
 
+        const { worstHull, worstCrew } =
+            getWorstRecentIncomingHit();
+
         const foodTile =
             getConsumableTileByIds(FOOD_IDS);
 
@@ -5740,7 +5838,8 @@
             foodTile,
             computeHealGlowState(
                 getCrewCurrentMax(),
-                getHealPerUseFromTile(foodTile, 16)
+                getHealPerUseFromTile(foodTile, 16),
+                worstCrew
             )
         );
 
@@ -5751,7 +5850,8 @@
             repairTile,
             computeHealGlowState(
                 getHullCurrentMax(),
-                getHealPerUseFromTile(repairTile, 300)
+                getHealPerUseFromTile(repairTile, 300),
+                worstHull
             )
         );
     }
