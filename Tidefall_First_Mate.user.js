@@ -5544,26 +5544,37 @@
         .tf-heal-glow-green,
         .tf-heal-glow-yellow,
         .tf-heal-glow-red {
+            position: relative;
+            z-index: 1;
             border-radius: 6px;
             animation: tf-heal-glow-pulse 1.6s ease-in-out infinite;
         }
 
+        /*
+         * Both an inset ring (always visible, can't be clipped by a
+         * parent row with overflow:hidden) and an outset glow (bonus
+         * bloom when there's room for it) so the highlight reliably
+         * hugs the tile itself regardless of the surrounding layout.
+         */
         .tf-heal-glow-green {
             box-shadow:
-                0 0 0 2px rgba(90, 210, 90, .9),
-                0 0 14px 4px rgba(90, 210, 90, .55);
+                inset 0 0 0 2px rgba(90, 210, 90, .95),
+                inset 0 0 10px 2px rgba(90, 210, 90, .5),
+                0 0 10px 3px rgba(90, 210, 90, .55);
         }
 
         .tf-heal-glow-yellow {
             box-shadow:
-                0 0 0 2px rgba(230, 190, 60, .9),
-                0 0 14px 4px rgba(230, 190, 60, .5);
+                inset 0 0 0 2px rgba(230, 190, 60, .95),
+                inset 0 0 10px 2px rgba(230, 190, 60, .45),
+                0 0 10px 3px rgba(230, 190, 60, .5);
         }
 
         .tf-heal-glow-red {
             box-shadow:
-                0 0 0 2px rgba(230, 70, 60, .95),
-                0 0 16px 5px rgba(230, 70, 60, .7);
+                inset 0 0 0 2px rgba(230, 70, 60, .98),
+                inset 0 0 12px 3px rgba(230, 70, 60, .55),
+                0 0 12px 4px rgba(230, 70, 60, .7);
             animation-duration: .9s;
         }
 
