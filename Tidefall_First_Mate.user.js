@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.9.3
+// @version      1.9.5
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history, and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -25,8 +25,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.9.3';
-    const FIRST_MATE_BUILD_ID = '2026-08-12-remove-theoretical-volley';
+    const FIRST_MATE_VERSION = '1.9.5';
+    const FIRST_MATE_BUILD_ID = '2026-08-16-heal-timing-glow';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -50,6 +50,8 @@
 
         repairWarningEnabled: true,
         repairWarningValue: 0,
+
+        healGlowEnabled: true,
 
         idleWarningEnabled: true,
         idleWarningSeconds: 30,
@@ -120,37 +122,6 @@
         saveSettings();
         refreshSettingsUI();
         handleSettingsChanged();
-    }
-
-    // =========================================================
-    // NATIVE TIDEFALL PANEL FRAME
-    // =========================================================
-
-    function addNativePanelFrame(panel) {
-        if (
-            !panel ||
-            panel.querySelector(':scope > .rp-frame')
-        ) {
-            return;
-        }
-
-        const frame =
-            document.createElement('div');
-
-        frame.className =
-            'rp-frame';
-
-        frame.setAttribute(
-            'aria-hidden',
-            'true'
-        );
-
-        frame.innerHTML = `
-            <div class="rp-edge rp-edge--top"></div>
-            <div class="rp-edge rp-edge--bottom"></div>
-        `;
-
-        panel.prepend(frame);
     }
 
     // =========================================================
@@ -883,6 +854,30 @@
 
         element.style.display =
             value;
+
+        return true;
+    }
+
+    function setHTMLIfChanged(
+        element,
+        value
+    ) {
+        if (!element) {
+            return false;
+        }
+
+        const next =
+            String(value);
+
+        if (element.dataset.tfLastHtml === next) {
+            return false;
+        }
+
+        element.innerHTML =
+            next;
+
+        element.dataset.tfLastHtml =
+            next;
 
         return true;
     }
@@ -5499,7 +5494,8 @@
             return;
         }
 
-        combatWarningContent.innerHTML =
+        setHTMLIfChanged(
+            combatWarningContent,
             visibleWarnings
                 .map(
                     warning => `
@@ -5514,11 +5510,241 @@
                 )
                 .join(
                     '<div style="height: 14px;"></div>'
-                );
+                )
+        );
 
         combatWarning.style.display =
             'block';
     }
+
+    // =========================================================
+    // HEAL TIMING GLOW (food / repair kit tiles)
+    //
+    // Glows the equipped food/repair-kit tile so it's obvious at a
+    // glance whether now is a good time to consume it:
+    //   green  - low enough that healing now uses the item fully (no waste)
+    //   yellow - low-ish, but healing now would overheal a bit -- ok, not ideal
+    //   red    - critical, heal now regardless of waste
+    //   none   - healthy, no need to heal yet
+    // =========================================================
+
+    const HEAL_GLOW_ENTER_PCT = 60;    // % and below: glow turns on
+    const HEAL_GLOW_CRITICAL_PCT = 25; // % and below: always red, regardless of overheal
+
+    const HEAL_GLOW_CLASSES = [
+        'tf-heal-glow-green',
+        'tf-heal-glow-yellow',
+        'tf-heal-glow-red'
+    ];
+
+    const healGlowStyle =
+        document.createElement('style');
+
+    healGlowStyle.textContent = `
+        .tf-heal-glow-green,
+        .tf-heal-glow-yellow,
+        .tf-heal-glow-red {
+            border-radius: 6px;
+            animation: tf-heal-glow-pulse 1.6s ease-in-out infinite;
+        }
+
+        .tf-heal-glow-green {
+            box-shadow:
+                0 0 0 2px rgba(90, 210, 90, .9),
+                0 0 14px 4px rgba(90, 210, 90, .55);
+        }
+
+        .tf-heal-glow-yellow {
+            box-shadow:
+                0 0 0 2px rgba(230, 190, 60, .9),
+                0 0 14px 4px rgba(230, 190, 60, .5);
+        }
+
+        .tf-heal-glow-red {
+            box-shadow:
+                0 0 0 2px rgba(230, 70, 60, .95),
+                0 0 16px 5px rgba(230, 70, 60, .7);
+            animation-duration: .9s;
+        }
+
+        @keyframes tf-heal-glow-pulse {
+            0%, 100% { filter: brightness(1); }
+            50% { filter: brightness(1.3); }
+        }
+    `;
+
+    document.head.appendChild(
+        healGlowStyle
+    );
+
+    function parseCurrentMax(text) {
+        const match =
+            /(\d+)\s*\/\s*(\d+)/.exec(
+                text || ''
+            );
+
+        if (!match) {
+            return null;
+        }
+
+        return {
+            current: Number(match[1]),
+            max: Number(match[2])
+        };
+    }
+
+    function getHullCurrentMax() {
+        const element =
+            document.querySelector(
+                '#cs-hull-num'
+            );
+
+        return element
+            ? parseCurrentMax(element.textContent)
+            : null;
+    }
+
+    function getCrewCurrentMax() {
+        const element =
+            document.querySelector(
+                '#cs-crew-num'
+            );
+
+        return element
+            ? parseCurrentMax(element.textContent)
+            : null;
+    }
+
+    function getConsumableTileByIds(idSet) {
+        const container =
+            document.querySelector(
+                '#combat-ammo-hud-munitions'
+            );
+
+        if (!container) {
+            return null;
+        }
+
+        const nodes =
+            container.querySelectorAll(
+                '[data-item-id], [data-item-type]'
+            );
+
+        for (const node of nodes) {
+            const itemId =
+                Number(
+                    node.dataset.itemId ??
+                    node.dataset.itemType
+                );
+
+            if (idSet.has(itemId)) {
+                return node;
+            }
+        }
+
+        return null;
+    }
+
+    function getHealPerUseFromTile(tile, fallback) {
+        const title =
+            tile?.getAttribute('title') || '';
+
+        const match =
+            /\+\s*(\d+)\s*each/i.exec(title);
+
+        return match
+            ? Number(match[1])
+            : fallback;
+    }
+
+    function computeHealGlowState(currentMax, healPerUse) {
+        if (!currentMax) {
+            return null;
+        }
+
+        const missing =
+            currentMax.max - currentMax.current;
+
+        if (missing <= 0) {
+            return null; // already full
+        }
+
+        const pct =
+            (currentMax.current / currentMax.max) * 100;
+
+        if (pct <= HEAL_GLOW_CRITICAL_PCT) {
+            return 'red'; // heal now or risk dying, regardless of waste
+        }
+
+        if (pct <= HEAL_GLOW_ENTER_PCT) {
+            return missing >= healPerUse
+                ? 'green'   // healing now uses the full item, no waste
+                : 'yellow'; // low-ish, but healing now would overheal a bit
+        }
+
+        return null; // healthy, no need yet
+    }
+
+    function applyHealGlow(tile, state) {
+        if (!tile) {
+            return;
+        }
+
+        tile.classList.remove(
+            ...HEAL_GLOW_CLASSES
+        );
+
+        if (state) {
+            tile.classList.add(
+                `tf-heal-glow-${state}`
+            );
+        }
+    }
+
+    function clearAllHealGlow() {
+        document
+            .querySelectorAll(
+                HEAL_GLOW_CLASSES
+                    .map(cls => `.${cls}`)
+                    .join(', ')
+            )
+            .forEach(
+                element =>
+                    element.classList.remove(
+                        ...HEAL_GLOW_CLASSES
+                    )
+            );
+    }
+
+    function updateHealGlow() {
+        if (!settings.healGlowEnabled) {
+            clearAllHealGlow();
+            return;
+        }
+
+        const foodTile =
+            getConsumableTileByIds(FOOD_IDS);
+
+        applyHealGlow(
+            foodTile,
+            computeHealGlowState(
+                getCrewCurrentMax(),
+                getHealPerUseFromTile(foodTile, 16)
+            )
+        );
+
+        const repairTile =
+            getConsumableTileByIds(REPAIR_IDS);
+
+        applyHealGlow(
+            repairTile,
+            computeHealGlowState(
+                getHullCurrentMax(),
+                getHealPerUseFromTile(repairTile, 300)
+            )
+        );
+    }
+
 
     // =========================================================
     // SKILL PROGRESS PERCENTAGE
@@ -5724,10 +5950,6 @@
                 );
             }
         );
-    }
-
-    function updateSkillProgressPercentages() {
-        bindSkillProgressBars();
     }
 
     // =========================================================
@@ -10369,7 +10591,7 @@
                 );
 
             const signatureParts = [
-                `active:${currentCanonical}:${getActivityCyclesLeft() ?? 0}`
+                `active:${currentCanonical}:${currentCycles ?? 0}`
             ];
 
             rows.forEach(row => {
@@ -13819,6 +14041,22 @@
             })
         );
 
+        combatGroup.appendChild(
+            createSettingsCard({
+                title:
+                    'Heal Timing Glow',
+
+                description:
+                    'Glow the equipped food/repair-kit tile: green when healing now wastes nothing, yellow when it\'s ok but not ideal, red when it\'s critical.',
+
+                toggleKey:
+                    'healGlowEnabled',
+
+                trackerDependent:
+                    true
+            })
+        );
+
 
 
         const activityGroup =
@@ -15067,6 +15305,11 @@
     );
 
     setInterval(
+        updateHealGlow,
+        WARNING_SCAN_INTERVAL
+    );
+
+    setInterval(
         checkIdleWarning,
         WARNING_SCAN_INTERVAL
     );
@@ -15082,12 +15325,21 @@
     );
 
 
-    setInterval(
-        () => {
-            void applyStartupDisplayAndCamera();
-        },
-        500
-    );
+    const startupDisplayAndCameraInterval =
+        setInterval(
+            () => {
+                if (startupFollowShipApplied) {
+                    clearInterval(
+                        startupDisplayAndCameraInterval
+                    );
+
+                    return;
+                }
+
+                void applyStartupDisplayAndCamera();
+            },
+            500
+        );
 
     setInterval(
         checkNavigationFollowShip,
@@ -15098,6 +15350,22 @@
         'pagehide',
         () => {
             archiveCombatSession();
+
+            /*
+             * The price cache write is debounced by 150ms
+             * (schedulePriceCacheSave). Flush it here so a
+             * price update just before the tab closes isn't
+             * silently lost.
+             */
+            if (priceCacheSaveTimer !== null) {
+                clearTimeout(
+                    priceCacheSaveTimer
+                );
+
+                priceCacheSaveTimer = null;
+
+                savePriceCache();
+            }
         }
     );
 
