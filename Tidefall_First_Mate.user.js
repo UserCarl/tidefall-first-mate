@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.9.6
+// @version      1.9.8
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history, and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -25,8 +25,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.9.6';
-    const FIRST_MATE_BUILD_ID = '2026-08-16-heal-glow-waste-fix';
+    const FIRST_MATE_VERSION = '1.9.8';
+    const FIRST_MATE_BUILD_ID = '2026-08-16-glow-qty-check';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -5546,7 +5546,13 @@
     // below on the next volley -- regardless of the flat % cutoff above.
     // Hits are time-limited so a big critical from a fight that's long
     // over doesn't keep this stuck on.
-    const INCOMING_HIT_LOOKBACK = 5;
+    // Sized generously so this count cap essentially never binds -- the
+    // 30s time window (INCOMING_HIT_MAX_AGE_MS) is meant to be the actual
+    // "recent" boundary. A small cap here can silently evict a big crit
+    // before its own 30s freshness expires it (e.g. several ordinary hits
+    // landing right after it in a fast fight), making the glow forget the
+    // worst hit even though it's still well within the window.
+    const INCOMING_HIT_LOOKBACK = 50;
     const INCOMING_HIT_MAX_AGE_MS = 30000;
 
     const INCOMING_HIT_SELECTOR =
@@ -5744,7 +5750,11 @@
             : fallback;
     }
 
-    function computeHealGlowState(currentMax, healPerUse, worstIncomingHit) {
+    function computeHealGlowState(currentMax, healPerUse, worstIncomingHit, qty) {
+        if (qty === null || qty <= 0) {
+            return null; // nothing to consume -- can't glow "heal now" for an item you don't have
+        }
+
         if (!currentMax) {
             return null;
         }
@@ -5839,7 +5849,8 @@
             computeHealGlowState(
                 getCrewCurrentMax(),
                 getHealPerUseFromTile(foodTile, 16),
-                worstCrew
+                worstCrew,
+                getItemQuantityForIds(FOOD_IDS)
             )
         );
 
@@ -5851,7 +5862,8 @@
             computeHealGlowState(
                 getHullCurrentMax(),
                 getHealPerUseFromTile(repairTile, 300),
-                worstHull
+                worstHull,
+                getItemQuantityForIds(REPAIR_IDS)
             )
         );
     }
