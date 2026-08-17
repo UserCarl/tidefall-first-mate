@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.11
+// @version      1.11.1
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history, and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -9731,6 +9731,9 @@
 
         const remainingXP =
             getActivityRemainingXP();
+
+        const currentStats =
+            getCurrentEffectiveActivityStats();
 
         if (
             remainingXP !== null &&
