@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.9.8
+// @version      1.10
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history, and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -68,6 +68,9 @@
         queueFinishedNotificationEnabled: false,
         combatSessionHistoryEnabled: true,
         queueDebuggerEnabled: false,
+
+        combatShowNetGold: true,
+        combatPerHourMetric: 'net',
 
         skillProgressPercentEnabled: false,
 
@@ -795,6 +798,12 @@
             : '—';
     }
 
+    function formatSignedRate(value) {
+        return Number.isFinite(value)
+            ? Math.round(value).toLocaleString()
+            : '—';
+    }
+
     function titleCaseSkill(skill) {
         if (!skill) {
             return 'Activity';
@@ -1356,7 +1365,8 @@
                 var(--reward-xp, #aee67a);
         }
 
-        #tf-net-gold {
+        #tf-net-gold,
+        #tf-per-hour-value {
             color:
                 var(--reward-gold, #f0c45c);
         }
@@ -2416,7 +2426,8 @@
             color: var(--combat-victory, #e0c36a);
         }
 
-        .tf-combat-header-stat[data-kind="gold"] .tf-combat-header-value {
+        .tf-combat-header-stat[data-kind="gold"] .tf-combat-header-value,
+        .tf-combat-header-stat[data-kind="perhour"] .tf-combat-header-value {
             color: var(--reward-gold, #f0c45c);
         }
 
@@ -2717,6 +2728,25 @@
                 </span>
             </div>
 
+            <div
+                id="tf-per-hour-row"
+                class="tf-stat-row"
+            >
+                <span
+                    id="tf-per-hour-label"
+                    class="tf-stat-label"
+                >
+                    Net Profit / hr
+                </span>
+
+                <span
+                    id="tf-per-hour-value"
+                    class="tf-stat-value"
+                >
+                    0
+                </span>
+            </div>
+
             <div id="tf-pve-controls">
 
                 <button
@@ -2797,6 +2827,16 @@
     const netGoldRow =
         combatPanel.querySelector(
             '#tf-net-gold-row'
+        );
+
+    const perHourLabelElement =
+        combatPanel.querySelector(
+            '#tf-per-hour-label'
+        );
+
+    const perHourValueElement =
+        combatPanel.querySelector(
+            '#tf-per-hour-value'
         );
 
     const costWindow =
@@ -2891,7 +2931,7 @@
 
         <div id="tf-damage-window-body">
             <div class="tf-cost-row tf-total">
-                <span>DPS</span>
+                <span>DMG</span>
                 <strong id="tf-damage-dps">—</strong>
             </div>
             <div class="tf-cost-row">
@@ -4267,10 +4307,10 @@
                 ) {
                     rows.push(
                         [
-                            'DPS',
-                            formatRate(
-                                Number(session.damageDps)
-                            )
+                            'DMG',
+                            Math.round(
+                                Number(session.damageAverage) || 0
+                            ).toLocaleString()
                         ],
                         [
                             'Avg Hit',
@@ -7085,6 +7125,28 @@
         return total;
     }
 
+    function getCombatHours() {
+        return Math.max(
+            getCombatSessionDurationSeconds() / 3600,
+            1 / 3600
+        );
+    }
+
+    function getCombatPerHourValue() {
+        const hours =
+            getCombatHours();
+
+        return settings.combatPerHourMetric === 'gross'
+            ? combatGrossGold / hours
+            : (combatGrossGold - getConsumableCost()) / hours;
+    }
+
+    function getCombatPerHourLabel() {
+        return settings.combatPerHourMetric === 'gross'
+            ? 'Profit / hr'
+            : 'Net Profit / hr';
+    }
+
     function checkForMissingPrices() {
         if (
             !combatRunning ||
@@ -7244,14 +7306,13 @@
     function updateDamageWindowDisplay() {
         if (!damageWindow) return;
 
-        const dps = getCombatDps();
         const average = getCombatAverageHit();
         const accuracy = getCombatAccuracy();
 
         setTextIfChanged(
             damageDpsElement,
             combatDamageHits > 0
-                ? formatRate(dps)
+                ? Math.round(average).toLocaleString()
                 : '—'
         );
         setTextIfChanged(
@@ -7386,6 +7447,23 @@
             netGoldElement.title =
                 nextTitle;
         }
+
+        setDisplayIfChanged(
+            netGoldRow,
+            settings.combatShowNetGold
+                ? ''
+                : 'none'
+        );
+
+        setTextIfChanged(
+            perHourLabelElement,
+            getCombatPerHourLabel()
+        );
+
+        setTextIfChanged(
+            perHourValueElement,
+            formatSignedRate(getCombatPerHourValue())
+        );
 
         /*
          * This is the single once-per-second header refresh. The old
@@ -12149,13 +12227,18 @@
             </span>
 
             <span class="tf-combat-header-stat" data-kind="dps">
-                <span class="tf-combat-header-label">DPS</span>
+                <span class="tf-combat-header-label">DMG</span>
                 <span id="tf-header-combat-dps" class="tf-combat-header-value">—</span>
             </span>
 
             <span class="tf-combat-header-stat" data-kind="gold">
                 <span class="tf-combat-header-label">Net Gold</span>
                 <span id="tf-header-combat-gold" class="tf-combat-header-value">0</span>
+            </span>
+
+            <span class="tf-combat-header-stat" data-kind="perhour">
+                <span id="tf-header-combat-perhour-label" class="tf-combat-header-label">Net Profit / hr</span>
+                <span id="tf-header-combat-perhour" class="tf-combat-header-value">—</span>
             </span>
         `;
 
@@ -12309,8 +12392,31 @@
                 '#tf-header-combat-dps'
             ),
             combatDamageHits > 0
-                ? formatRate(getCombatDps())
+                ? Math.round(getCombatAverageHit()).toLocaleString()
                 : '—'
+        );
+
+        setDisplayIfChanged(
+            combatHeaderLayout.querySelector(
+                '[data-kind="gold"]'
+            ),
+            settings.combatShowNetGold
+                ? ''
+                : 'none'
+        );
+
+        setTextIfChanged(
+            combatHeaderLayout.querySelector(
+                '#tf-header-combat-perhour-label'
+            ),
+            getCombatPerHourLabel()
+        );
+
+        setTextIfChanged(
+            combatHeaderLayout.querySelector(
+                '#tf-header-combat-perhour'
+            ),
+            formatSignedRate(getCombatPerHourValue())
         );
 
         setTextIfChanged(
@@ -13980,6 +14086,86 @@
                             consumableCostsRow
                         );
 
+                        const showNetGoldRow =
+                            document.createElement(
+                                'div'
+                            );
+
+                        showNetGoldRow.className =
+                            'tf-firstmate-toggle-row';
+
+                        showNetGoldRow.dataset.parentToggle =
+                            'combatTrackerEnabled';
+
+                        const showNetGoldLabel =
+                            document.createElement(
+                                'span'
+                            );
+
+                        showNetGoldLabel.className =
+                            'tf-firstmate-setting-label';
+
+                        showNetGoldLabel.textContent =
+                            'Show Net Gold';
+
+                        showNetGoldRow.append(
+                            showNetGoldLabel,
+                            createToggle(
+                                'combatShowNetGold'
+                            )
+                        );
+
+                        cardBody.appendChild(
+                            showNetGoldRow
+                        );
+
+                        const perHourRow =
+                            document.createElement(
+                                'div'
+                            );
+
+                        perHourRow.className =
+                            'tf-firstmate-select-row';
+
+                        perHourRow.dataset.parentToggle =
+                            'combatTrackerEnabled';
+
+                        const perHourLabel =
+                            document.createElement(
+                                'span'
+                            );
+
+                        perHourLabel.className =
+                            'tf-firstmate-setting-label';
+
+                        perHourLabel.textContent =
+                            'Per-Hour Stat';
+
+                        perHourRow.append(
+                            perHourLabel,
+                            createSelect(
+                                'combatPerHourMetric',
+                                [
+                                    {
+                                        value:
+                                            'net',
+                                        label:
+                                            'Net Profit / hr'
+                                    },
+                                    {
+                                        value:
+                                            'gross',
+                                        label:
+                                            'Profit / hr'
+                                    }
+                                ]
+                            )
+                        );
+
+                        cardBody.appendChild(
+                            perHourRow
+                        );
+
                     }
             })
         );
@@ -13990,7 +14176,7 @@
                     'Combat Damage Tracker',
 
                 description:
-                    'Track observed DPS, average hit, minimum and maximum hit, total damage, hits, misses, and accuracy from Tidefall combat events.',
+                    'Track observed DMG (average volley damage), minimum and maximum hit, total damage, hits, misses, and accuracy from Tidefall combat events.',
 
                 toggleKey:
                     'combatDamageTrackerEnabled'
