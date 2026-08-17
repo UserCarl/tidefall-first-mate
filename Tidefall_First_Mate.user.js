@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.10
+// @version      1.11
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history, and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -445,12 +445,38 @@
         237: 'Master Repair Kit',
         238: 'Hull Restoration Kit',
         239: 'Refit Crate',
-        240: 'Master Refit Crate'
+        240: 'Master Refit Crate',
+
+        211: 'Copper 2-Pounder',
+        212: 'Iron 4-Pounder',
+        213: 'Cinder 6-Pounder',
+        214: 'Darkiron 8-Pounder',
+        215: 'Mithril 9-Pounder',
+        216: 'Adamantite 12-Pounder',
+        217: 'Starmetal 18-Pounder',
+        218: 'Stormglass 24-Pounder',
+        219: 'Leviathan 32-Pounder',
+        220: 'Abyssal 42-Pounder'
     };
 
     const AMMO_IDS = new Set([
         201, 202, 203, 204, 205,
         206, 207, 208, 209, 210
+    ]);
+
+    /*
+     * Cannons are not consumed from inventory like ammo/food/repair
+     * kits. They wear down in place (condition drops on the equipped
+     * hold slot) and are priced as a fraction of a full replacement
+     * cannon. Deliberately left out of AMMO_IDS/FOOD_IDS/REPAIR_IDS
+     * so the ammo-HUD consumable scanner never mistakes an equipped
+     * cannon for ammo. They do end up in TRACKED_IDS via ITEM_NAMES,
+     * which is harmless and lets the Exchange price scanner capture
+     * live cannon prices too.
+     */
+    const CANNON_IDS = new Set([
+        211, 212, 213, 214, 215,
+        216, 217, 218, 219, 220
     ]);
 
     const FOOD_IDS = new Set([
@@ -505,7 +531,18 @@
         237: 745,
         238: 1350,
         239: 1200,
-        240: 3350
+        240: 3350,
+
+        211: 325,
+        212: 725,
+        213: 1300,
+        214: 1975,
+        215: 2850,
+        216: 4750,
+        217: 7650,
+        218: 13000,
+        219: 28000,
+        220: 73000
     };
 
     function normalizeItemName(value) {
@@ -2890,6 +2927,11 @@
                 <strong id="tf-cost-repairs">-0</strong>
             </div>
 
+            <div class="tf-cost-row tf-negative">
+                <span>Cannon Wear</span>
+                <strong id="tf-cost-cannons">-0</strong>
+            </div>
+
             <div class="tf-cost-row tf-total">
                 <span>Net Gold</span>
                 <strong id="tf-cost-net">0</strong>
@@ -3077,6 +3119,11 @@
     const costRepairsElement =
         costWindow.querySelector(
             '#tf-cost-repairs'
+        );
+
+    const costCannonElement =
+        costWindow.querySelector(
+            '#tf-cost-cannons'
         );
 
     const costNetElement =
@@ -3701,6 +3748,14 @@
         new Map();
 
     /*
+     * Last observed condition (current, not max) for each equipped
+     * cannon hold slot, keyed by "ship:slot" so 14 cannons on one
+     * ship wear down independently.
+     */
+    const lastCannonConditions =
+        new Map();
+
+    /*
      * Last warehouse quantities seen while the port
      * inventory is mounted in the DOM.
      *
@@ -4109,6 +4164,7 @@
         const ammoCost = getAmmoCost();
         const foodCost = getFoodCost();
         const repairCost = getRepairCost();
+        const cannonWearCost = getCannonWearCost();
         const consumableCost =
             getConsumableCost();
         const netGold =
@@ -4141,6 +4197,7 @@
             ammoCost,
             foodCost,
             repairCost,
+            cannonWearCost,
             consumableCost,
             netGold,
             netGoldPerHour:
@@ -4279,6 +4336,12 @@
                         'Repairs',
                         `-${Math.round(
                             Number(session.repairCost) || 0
+                        ).toLocaleString()}g`
+                    ],
+                    [
+                        'Cannons',
+                        `-${Math.round(
+                            Number(session.cannonWearCost) || 0
                         ).toLocaleString()}g`
                     ],
                     [
@@ -5048,6 +5111,85 @@
             );
 
         return quantities;
+    }
+
+    /*
+     * Cannon condition is shown on the ship's hold slots, not inside
+     * the ammo HUD: <div class="sp-hold-slot" data-slot="2"
+     * data-ship="336146" data-itemtype="217"><img class=
+     * "mp-cannon-condition" title="997 / 2200" ...></div>. Read every
+     * such slot directly so wear on all 14 cannons is tracked
+     * per-slot, independent of which type is equipped in each.
+     */
+    function getEquippedCannonSlots() {
+        const slots = [];
+
+        document
+            .querySelectorAll(
+                '.sp-hold-slot[data-itemtype]'
+            )
+            .forEach(
+                slot => {
+                    const itemId =
+                        Number(
+                            slot.dataset.itemtype
+                        );
+
+                    if (!CANNON_IDS.has(itemId)) {
+                        return;
+                    }
+
+                    const conditionElement =
+                        slot.querySelector(
+                            '.mp-cannon-condition'
+                        );
+
+                    if (!conditionElement) {
+                        return;
+                    }
+
+                    const raw =
+                        conditionElement.getAttribute('title') ||
+                        conditionElement.getAttribute('aria-label') ||
+                        '';
+
+                    const match =
+                        raw.match(
+                            /(\d[\d,]*)\s*\/\s*(\d[\d,]*)/
+                        );
+
+                    if (!match) {
+                        return;
+                    }
+
+                    const current =
+                        Number(match[1].replace(/,/g, ''));
+
+                    const max =
+                        Number(match[2].replace(/,/g, ''));
+
+                    if (
+                        !Number.isFinite(current) ||
+                        !Number.isFinite(max) ||
+                        max <= 0
+                    ) {
+                        return;
+                    }
+
+                    const slotKey =
+                        `${slot.dataset.ship || ''}:` +
+                        `${slot.dataset.slot ?? ''}`;
+
+                    slots.push({
+                        slotKey,
+                        itemId,
+                        current,
+                        max
+                    });
+                }
+            );
+
+        return slots;
     }
 
     function scanWarehouseConsumables() {
@@ -7036,6 +7178,131 @@
         }
     }
 
+    /*
+     * Mirrors scanItemConsumption()/recordItemConsumption() above, but
+     * for cannon condition instead of inventory quantity. A condition
+     * drop is converted to a fraction of a full cannon (decrease/max)
+     * and stored in the shared consumedItems map under the cannon's
+     * item ID, so it is priced and folded into net profit exactly like
+     * ammo/food/repair kits with zero changes to the cost math below.
+     */
+    function recordCannonWear(slots) {
+        let wearChanged = false;
+
+        slots.forEach(
+            ({ slotKey, itemId, current, max }) => {
+                if (
+                    !lastCannonConditions.has(
+                        slotKey
+                    )
+                ) {
+                    lastCannonConditions.set(
+                        slotKey,
+                        current
+                    );
+
+                    return;
+                }
+
+                const previous =
+                    lastCannonConditions.get(
+                        slotKey
+                    );
+
+                if (current < previous) {
+                    const decrease =
+                        previous - current;
+
+                    consumedItems.set(
+                        itemId,
+                        (
+                            consumedItems.get(
+                                itemId
+                            ) || 0
+                        ) +
+                        decrease / max
+                    );
+
+                    wearChanged = true;
+
+                    const price =
+                        getCachedPrice(
+                            itemId
+                        );
+
+                    if (
+                        price > 0 &&
+                        !sessionPrices.has(
+                            itemId
+                        )
+                    ) {
+                        sessionPrices.set(
+                            itemId,
+                            price
+                        );
+                    }
+                }
+
+                lastCannonConditions.set(
+                    slotKey,
+                    current
+                );
+            }
+        );
+
+        return wearChanged;
+    }
+
+    function scanCannonWear() {
+        const inCombat =
+            isActuallyInCombat();
+
+        const slots =
+            getEquippedCannonSlots();
+
+        const withinCombatTrackingGrace =
+            lastCombatTime > 0 &&
+            Date.now() - lastCombatTime <=
+                ITEM_TRACKING_COMBAT_GRACE_MS;
+
+        if (
+            !settings.combatTrackerEnabled
+        ) {
+            if (
+                !inCombat &&
+                !withinCombatTrackingGrace
+            ) {
+                lastCannonConditions.clear();
+            }
+
+            return;
+        }
+
+        if (
+            !inCombat &&
+            !withinCombatTrackingGrace
+        ) {
+            lastCannonConditions.clear();
+            return;
+        }
+
+        if (
+            !combatRunning &&
+            combatKills > 0
+        ) {
+            return;
+        }
+
+        const changed =
+            recordCannonWear(
+                slots
+            );
+
+        if (changed) {
+            updateCombatDisplay();
+        }
+    }
+
     function getConsumedCostForIds(
         idSet
     ) {
@@ -7089,6 +7356,12 @@
     function getRepairCost() {
         return getConsumedCostForIds(
             REPAIR_IDS
+        );
+    }
+
+    function getCannonWearCost() {
+        return getConsumedCostForIds(
+            CANNON_IDS
         );
     }
 
@@ -7235,6 +7508,13 @@
             costRepairsElement,
             `-${Math.round(
                 getRepairCost()
+            ).toLocaleString()}`
+        );
+
+        setTextIfChanged(
+            costCannonElement,
+            `-${Math.round(
+                getCannonWearCost()
             ).toLocaleString()}`
         );
 
@@ -7774,6 +8054,7 @@
         consumedItems.clear();
         sessionPrices.clear();
         lastQuantities.clear();
+        lastCannonConditions.clear();
         pendingItemDecreases.clear();
 
 
@@ -7893,6 +8174,7 @@
                 consumedItems.clear();
                 sessionPrices.clear();
                 lastQuantities.clear();
+                lastCannonConditions.clear();
                 pendingItemDecreases.clear();
 
 
@@ -15581,6 +15863,11 @@
     );
 
     setInterval(
+        scanCannonWear,
+        ITEM_SCAN_INTERVAL
+    );
+
+    setInterval(
         scanMarketPrices,
         MARKET_SCAN_INTERVAL
     );
@@ -15697,6 +15984,7 @@
     consumedItems.clear();
     sessionPrices.clear();
     lastQuantities.clear();
+    lastCannonConditions.clear();
     pendingItemDecreases.clear();
 
     lastCombatTime =
