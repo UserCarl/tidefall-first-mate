@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.11.1
+// @version      1.12
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history, and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -25,8 +25,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.9.8';
-    const FIRST_MATE_BUILD_ID = '2026-08-16-glow-qty-check';
+    const FIRST_MATE_VERSION = '1.12';
+    const FIRST_MATE_BUILD_ID = '2026-08-17-fix-current-stats';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
