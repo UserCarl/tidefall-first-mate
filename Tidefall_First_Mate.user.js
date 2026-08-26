@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.12
-// @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history, and First Mate Settings
+// @version      1.14
+// @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history (with itemized food/repair-kit consumption and CSV export), and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
 // @grant        none
@@ -25,8 +25,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.12';
-    const FIRST_MATE_BUILD_ID = '2026-08-17-fix-current-stats';
+    const FIRST_MATE_VERSION = '1.13';
+    const FIRST_MATE_BUILD_ID = '2026-08-17-low-profit-warning';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -50,6 +50,9 @@
 
         repairWarningEnabled: true,
         repairWarningValue: 0,
+
+        profitWarningEnabled: false,
+        profitWarningValue: 0,
 
         healGlowEnabled: true,
 
@@ -1502,6 +1505,14 @@
             border-bottom: 0;
         }
 
+        .tf-cost-item-breakdown {
+            margin: -4px 0 6px;
+            color: var(--text-secondary, #d4be8ca6);
+            font-size: 10px;
+            line-height: 1.35;
+            opacity: .8;
+        }
+
         #tf-pve-controls {
             display: flex;
             gap: 8px;
@@ -2292,7 +2303,16 @@
             white-space: nowrap;
         }
 
-        #tf-combat-history-clear {
+        .tf-combat-history-items {
+            margin-top: 5px;
+            color: var(--text-secondary, #d4be8ca6);
+            font-size: 10px;
+            line-height: 1.35;
+            opacity: .8;
+        }
+
+        #tf-combat-history-clear,
+        #tf-combat-history-export {
             width: auto;
             min-width: 48px;
             padding: 0 9px;
@@ -2922,10 +2942,14 @@
                 <strong id="tf-cost-food">-0</strong>
             </div>
 
+            <div class="tf-cost-item-breakdown" id="tf-cost-food-items">None</div>
+
             <div class="tf-cost-row tf-negative">
                 <span>Repair Kits</span>
                 <strong id="tf-cost-repairs">-0</strong>
             </div>
+
+            <div class="tf-cost-item-breakdown" id="tf-cost-repairs-items">None</div>
 
             <div class="tf-cost-row tf-negative">
                 <span>Cannon Wear</span>
@@ -3039,6 +3063,15 @@
             </div>
 
             <button
+                id="tf-combat-history-export"
+                class="tf-window-btn"
+                type="button"
+                title="Export combat history (CSV): gold/XP/damage per session plus food and repair kits consumed"
+            >
+                Export
+            </button>
+
+            <button
                 id="tf-combat-history-clear"
                 class="tf-window-btn"
                 type="button"
@@ -3116,9 +3149,19 @@
             '#tf-cost-food'
         );
 
+    const costFoodItemsElement =
+        costWindow.querySelector(
+            '#tf-cost-food-items'
+        );
+
     const costRepairsElement =
         costWindow.querySelector(
             '#tf-cost-repairs'
+        );
+
+    const costRepairsItemsElement =
+        costWindow.querySelector(
+            '#tf-cost-repairs-items'
         );
 
     const costCannonElement =
@@ -3185,6 +3228,11 @@
     const combatHistoryBody =
         combatHistoryWindow.querySelector(
             '#tf-combat-history-body'
+        );
+
+    const combatHistoryExportButton =
+        combatHistoryWindow.querySelector(
+            '#tf-combat-history-export'
         );
 
     const combatHistoryClearButton =
@@ -4150,15 +4198,11 @@
         ).forEach(processDamageEvent);
     }
 
-    function archiveCombatSession() {
-        if (
-            !settings.combatSessionHistoryEnabled ||
-            combatHistoryArchivedCurrentSession ||
-            combatKills <= 0
-        ) {
-            return;
-        }
-
+    // Snapshot of the current combat session's stats in the same shape
+    // used for history entries. Read-only -- does not touch consumedItems,
+    // combatKills, etc. -- so it can also be used to preview the still-in-
+    // -progress session for export without archiving/resetting it.
+    function buildSessionRecord() {
         const durationSeconds =
             getCombatSessionDurationSeconds();
         const ammoCost = getAmmoCost();
@@ -4180,7 +4224,7 @@
                 ? lastCombatTime
                 : Date.now();
 
-        combatSessionHistory.unshift({
+        return {
             id:
                 `${Date.now()}-${combatKills}-${Math.round(combatGrossGold)}`,
             startedAt:
@@ -4219,8 +4263,26 @@
                     ? combatDamageMin
                     : 0,
             damageMax:
-                combatDamageMax
-        });
+                combatDamageMax,
+            foodBreakdown:
+                getFoodConsumedBreakdown(),
+            kitsBreakdown:
+                getKitsConsumedBreakdown()
+        };
+    }
+
+    function archiveCombatSession() {
+        if (
+            !settings.combatSessionHistoryEnabled ||
+            combatHistoryArchivedCurrentSession ||
+            combatKills <= 0
+        ) {
+            return;
+        }
+
+        combatSessionHistory.unshift(
+            buildSessionRecord()
+        );
 
         combatSessionHistory =
             combatSessionHistory.slice(
@@ -4414,9 +4476,29 @@
                     }
                 );
 
+                const foodLine =
+                    document.createElement('div');
+
+                foodLine.className =
+                    'tf-combat-history-items';
+
+                foodLine.textContent =
+                    `Food: ${formatConsumedBreakdown(session.foodBreakdown)}`;
+
+                const kitsLine =
+                    document.createElement('div');
+
+                kitsLine.className =
+                    'tf-combat-history-items';
+
+                kitsLine.textContent =
+                    `Kits: ${formatConsumedBreakdown(session.kitsBreakdown)}`;
+
                 entry.append(
                     time,
-                    grid
+                    grid,
+                    foodLine,
+                    kitsLine
                 );
                 combatHistoryBody.appendChild(entry);
             }
@@ -4444,6 +4526,103 @@
         combatSessionHistory = [];
         saveCombatSessionHistory();
         renderCombatSessionHistory();
+    }
+
+    // =========================================================
+    // COMBAT HISTORY EXPORT (CSV)
+    // =========================================================
+
+    function csvEscape(value) {
+        const s = String(value == null ? '' : value);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }
+
+    function formatBreakdownForCsv(list) {
+        if (!list || !list.length) return '';
+        return list
+            .map(item => `${item.name} x${item.quantity}`)
+            .join('; ');
+    }
+
+    const COMBAT_HISTORY_CSV_HEADER = [
+        'Status', 'Ended', 'Duration (s)', 'Kills', 'XP', 'Gross Gold',
+        'Ammo Cost', 'Food Cost', 'Repair Cost', 'Cannon Wear Cost',
+        'Net Gold', 'Net Gold/hr', 'XP/hr', 'Damage Total', 'Damage Hits',
+        'Damage Misses', 'Avg Hit', 'Min Hit', 'Max Hit', 'DPS',
+        'Food Consumed', 'Kits Consumed'
+    ];
+
+    function sessionRecordToCsvRow(session, status) {
+        return [
+            status,
+            new Date(Number(session.endedAt) || Date.now()).toISOString(),
+            Math.round(Number(session.durationSeconds) || 0),
+            Math.round(Number(session.kills) || 0),
+            Math.round(Number(session.xp) || 0),
+            Math.round(Number(session.grossGold) || 0),
+            Math.round(Number(session.ammoCost) || 0),
+            Math.round(Number(session.foodCost) || 0),
+            Math.round(Number(session.repairCost) || 0),
+            Math.round(Number(session.cannonWearCost) || 0),
+            Math.round(Number(session.netGold) || 0),
+            Math.round(Number(session.netGoldPerHour) || 0),
+            Math.round(Number(session.xpPerHour) || 0),
+            Math.round(Number(session.damageTotal) || 0),
+            Math.round(Number(session.damageHits) || 0),
+            Math.round(Number(session.damageMisses) || 0),
+            Math.round(Number(session.damageAverage) || 0),
+            Math.round(Number(session.damageMin) || 0),
+            Math.round(Number(session.damageMax) || 0),
+            Number(session.damageDps || 0).toFixed(1),
+            formatBreakdownForCsv(session.foodBreakdown),
+            formatBreakdownForCsv(session.kitsBreakdown)
+        ];
+    }
+
+    function buildCombatHistoryCsv() {
+        const rows = [];
+        rows.push(['Tidefall First Mate -- Combat Session History Export']);
+        rows.push(['Exported', new Date().toISOString()]);
+        rows.push([]);
+        rows.push(COMBAT_HISTORY_CSV_HEADER);
+
+        // Include the still-in-progress session (if any) ahead of the
+        // archived history, without archiving/resetting it -- otherwise
+        // exporting mid-fight would silently miss whatever hasn't ended yet.
+        if (
+            combatKills > 0 &&
+            !combatHistoryArchivedCurrentSession
+        ) {
+            rows.push(
+                sessionRecordToCsvRow(
+                    buildSessionRecord(),
+                    'Live (in progress)'
+                )
+            );
+        }
+
+        combatSessionHistory.forEach(session => {
+            rows.push(
+                sessionRecordToCsvRow(session, 'Archived')
+            );
+        });
+
+        return rows.map(r => r.map(csvEscape).join(',')).join('\n');
+    }
+
+    function exportCombatHistory() {
+        const csv = buildCombatHistoryCsv();
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        a.href = url;
+        a.download = `tidefall-first-mate-combat-history-${stamp}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        console.log('[First Mate] Exported combat session history to CSV.');
     }
 
     // =========================================================
@@ -5629,6 +5808,32 @@
                         settings.repairWarningValue <= 0
                             ? 'No repair kits remaining.'
                             : `Repair kits at or below ${settings.repairWarningValue}.`
+                });
+            }
+        }
+
+        if (
+            settings.profitWarningEnabled &&
+            /*
+             * Net profit/hr is extremely noisy in the first
+             * minute of a session (a single kill or repair can
+             * swing it wildly), so hold off evaluating it until
+             * there's enough session time for the rate to mean
+             * something.
+             */
+            getCombatSessionDurationSeconds() >= 60
+        ) {
+            const netPerHour =
+                (combatGrossGold - getConsumableCost()) /
+                getCombatHours();
+
+            if (netPerHour <= settings.profitWarningValue) {
+                warnings.push({
+                    key: 'LOW PROFIT',
+                    title: 'Low Profit Warning',
+                    message:
+                        `Net profit/hr at ${Math.round(netPerHour).toLocaleString()}g ` +
+                        `(threshold ${settings.profitWarningValue.toLocaleString()}g/hr).`
                 });
             }
         }
@@ -7341,6 +7546,70 @@
         return total;
     }
 
+    /*
+     * Per-item breakdown of what was actually consumed this session (e.g.
+     * "Tuna Rations x12, Shark Haunch x3"), not just the aggregate gold
+     * cost getConsumedCostForIds() above already tracks. Reads the same
+     * consumedItems map, just grouped by item name instead of summed to
+     * one number.
+     */
+    function getConsumedBreakdownForIds(
+        idSet
+    ) {
+        const list = [];
+
+        consumedItems.forEach(
+            (quantity, itemId) => {
+                if (
+                    !idSet.has(itemId) ||
+                    quantity <= 0
+                ) {
+                    return;
+                }
+
+                list.push({
+                    itemId,
+                    name:
+                        ITEM_NAMES[itemId] ||
+                        `Item ${itemId}`,
+                    quantity:
+                        Math.round(quantity)
+                });
+            }
+        );
+
+        list.sort(
+            (a, b) => b.quantity - a.quantity
+        );
+
+        return list;
+    }
+
+    function getFoodConsumedBreakdown() {
+        return getConsumedBreakdownForIds(
+            FOOD_IDS
+        );
+    }
+
+    function getKitsConsumedBreakdown() {
+        return getConsumedBreakdownForIds(
+            REPAIR_IDS
+        );
+    }
+
+    function formatConsumedBreakdown(list) {
+        if (!list || !list.length) {
+            return 'None';
+        }
+
+        return list
+            .map(
+                item =>
+                    `${item.name} ×${item.quantity.toLocaleString()}`
+            )
+            .join(', ');
+    }
+
     function getAmmoCost() {
         return getConsumedCostForIds(
             AMMO_IDS
@@ -7505,10 +7774,24 @@
         );
 
         setTextIfChanged(
+            costFoodItemsElement,
+            formatConsumedBreakdown(
+                getFoodConsumedBreakdown()
+            )
+        );
+
+        setTextIfChanged(
             costRepairsElement,
             `-${Math.round(
                 getRepairCost()
             ).toLocaleString()}`
+        );
+
+        setTextIfChanged(
+            costRepairsItemsElement,
+            formatConsumedBreakdown(
+                getKitsConsumedBreakdown()
+            )
         );
 
         setTextIfChanged(
@@ -8206,6 +8489,11 @@
     combatHistoryCloseButton.addEventListener(
         'click',
         closeCombatSessionHistory
+    );
+
+    combatHistoryExportButton.addEventListener(
+        'click',
+        exportCombatHistory
     );
 
     combatHistoryClearButton.addEventListener(
@@ -14632,6 +14920,26 @@
 
                 trackerDependent:
                     true
+            })
+        );
+
+        combatGroup.appendChild(
+            createSettingsCard({
+                title:
+                    'Low Profit Warning',
+
+                description:
+                    'Warn when net profit/hr drops to or below this (after 1 minute of combat, to let the rate settle).',
+
+                toggleKey:
+                    'profitWarningEnabled',
+
+                valueKey:
+                    'profitWarningValue',
+
+                min: -999999,
+                max: 999999,
+                unit: 'g/hr'
             })
         );
 
