@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.14
+// @version      1.15
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history (with itemized food/repair-kit consumption and CSV export), and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -25,8 +25,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.13';
-    const FIRST_MATE_BUILD_ID = '2026-08-17-low-profit-warning';
+    const FIRST_MATE_VERSION = '1.15';
+    const FIRST_MATE_BUILD_ID = '2026-08-26-crit-damage-tracking';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -2997,7 +2997,7 @@
 
         <div id="tf-damage-window-body">
             <div class="tf-cost-row tf-total">
-                <span>DMG</span>
+                <span>DPS</span>
                 <strong id="tf-damage-dps">—</strong>
             </div>
             <div class="tf-cost-row">
@@ -3013,8 +3013,26 @@
                 <strong id="tf-damage-max">—</strong>
             </div>
             <div class="tf-cost-row">
+                <span>Crits</span>
+                <strong id="tf-damage-crits">—</strong>
+            </div>
+            <div class="tf-cost-row">
                 <span>Total Damage</span>
                 <strong id="tf-damage-total">0</strong>
+            </div>
+
+            <div class="tf-damage-section-title">Damage by Type</div>
+            <div class="tf-cost-row">
+                <span>Hull</span>
+                <strong id="tf-damage-hull">0</strong>
+            </div>
+            <div class="tf-cost-row">
+                <span>Crew</span>
+                <strong id="tf-damage-crew">0</strong>
+            </div>
+            <div class="tf-cost-row">
+                <span>Rigging</span>
+                <strong id="tf-damage-rigging">0</strong>
             </div>
             <div class="tf-cost-row">
                 <span>Ammo</span>
@@ -3202,6 +3220,14 @@
         damageWindow.querySelector('#tf-damage-misses');
     const damageAccuracyElement =
         damageWindow.querySelector('#tf-damage-accuracy');
+    const damageCritsElement =
+        damageWindow.querySelector('#tf-damage-crits');
+    const damageHullElement =
+        damageWindow.querySelector('#tf-damage-hull');
+    const damageCrewElement =
+        damageWindow.querySelector('#tf-damage-crew');
+    const damageRiggingElement =
+        damageWindow.querySelector('#tf-damage-rigging');
 
 
 
@@ -3761,6 +3787,10 @@
     let combatDamageMisses = 0;
     let combatDamageMin = Infinity;
     let combatDamageMax = 0;
+    let combatDamageCrits = 0;
+    let combatDamageHull = 0;
+    let combatDamageCrew = 0;
+    let combatDamageRigging = 0;
     let combatDamageActiveMs = 0;
     let combatDamageActiveStartedAt = 0;
     let combatDamageFirstEventAt = 0;
@@ -3852,6 +3882,10 @@
         combatDamageMisses = 0;
         combatDamageMin = Infinity;
         combatDamageMax = 0;
+        combatDamageCrits = 0;
+        combatDamageHull = 0;
+        combatDamageCrew = 0;
+        combatDamageRigging = 0;
         combatDamageActiveMs = 0;
         combatDamageActiveStartedAt = 0;
         combatDamageFirstEventAt = 0;
@@ -3884,6 +3918,71 @@
                 Math.max(0, now - combatDamageActiveStartedAt);
             combatDamageActiveStartedAt = 0;
         }
+    }
+
+    /*
+     * Tidefall marks critical hits with their own combat-row class. The
+     * heal-glow danger check already relies on the incoming equivalent
+     * (.combat-row--incoming-critical), so the outgoing counterpart was
+     * being dropped from every damage stat: crits counted as neither hit
+     * nor miss, understating total damage, max hit, DPS, and accuracy.
+     * Matched loosely so a rename such as combat-row--outgoing-crit still
+     * registers instead of silently disappearing again.
+     */
+    const OUTGOING_DAMAGE_SELECTOR = [
+        '.log-entry.log-combat.combat-row--outgoing-hit[data-sent-at]',
+        '.log-entry.log-combat.combat-row--outgoing-critical[data-sent-at]',
+        '.log-entry.log-combat.combat-row--outgoing-crit[data-sent-at]',
+        '.log-entry.log-combat.combat-row--miss[data-sent-at]'
+    ].join(', ');
+
+    const DAMAGE_PART_SELECTORS = {
+        hull: '.combat-val--hull',
+        crew: '.combat-val--crew',
+        rigging: '.combat-val--rigging'
+    };
+
+    function isOutgoingCriticalRow(entry) {
+        return /combat-row--outgoing-crit/i.test(
+            String(entry?.className || '')
+        );
+    }
+
+    function isOutgoingDamageRow(entry) {
+        return Boolean(
+            entry?.classList?.contains(
+                'combat-row--outgoing-hit'
+            ) ||
+            isOutgoingCriticalRow(entry)
+        );
+    }
+
+    /*
+     * A single volley reports each damage type in its own value node,
+     * e.g. "...for 290 crew, 193 rigging". Sum every type present. The
+     * old single-pattern text read returned only the last number it
+     * matched and discarded the rest of the volley.
+     */
+    function readDamageParts(entry) {
+        const parts = { hull: 0, crew: 0, rigging: 0 };
+        let found = false;
+
+        Object.entries(DAMAGE_PART_SELECTORS).forEach(
+            ([key, selector]) => {
+                entry.querySelectorAll?.(selector)
+                    .forEach(node => {
+                        const value =
+                            numberFromText(node.textContent);
+
+                        if (value > 0) {
+                            parts[key] += value;
+                            found = true;
+                        }
+                    });
+            }
+        );
+
+        return found ? parts : null;
     }
 
     function parseCombatEventTimestamp(entry) {
@@ -3995,13 +4094,80 @@
             return { type: 'miss', damage: 0 };
         }
 
-        if (!entry.classList?.contains('combat-row--outgoing-hit')) {
+        if (!isOutgoingDamageRow(entry)) {
             return null;
+        }
+
+        const critical =
+            isOutgoingCriticalRow(entry);
+
+        /* Prefer Tidefall's per-type value nodes. This is the only read
+         * that captures every damage type in a multi-type volley. */
+        const parts =
+            readDamageParts(entry);
+
+        if (parts) {
+            const partsTotal =
+                parts.hull +
+                parts.crew +
+                parts.rigging;
+
+            if (partsTotal > 0) {
+                return {
+                    type: 'hit',
+                    damage: partsTotal,
+                    critical,
+                    parts
+                };
+            }
         }
 
         const text = String(entry.textContent || '')
             .replace(/\s+/g, ' ')
             .trim();
+
+        /* Text fallback for renders without value nodes. Matches every
+         * type in the line rather than stopping at the first. */
+        const typedFragments =
+            text.match(
+                /([\d,]+(?:\.\d+)?)\s*(hull|crew|rigging)\b/gi
+            ) || [];
+
+        if (typedFragments.length > 0) {
+            const fallbackParts =
+                { hull: 0, crew: 0, rigging: 0 };
+
+            let typedTotal = 0;
+
+            typedFragments.forEach(fragment => {
+                const match =
+                    fragment.match(
+                        /([\d,]+(?:\.\d+)?)\s*(hull|crew|rigging)/i
+                    );
+
+                if (!match) return;
+
+                const value =
+                    numberFromText(match[1]);
+
+                if (value <= 0) return;
+
+                fallbackParts[
+                    match[2].toLowerCase()
+                ] += value;
+
+                typedTotal += value;
+            });
+
+            if (typedTotal > 0) {
+                return {
+                    type: 'hit',
+                    damage: typedTotal,
+                    critical,
+                    parts: fallbackParts
+                };
+            }
+        }
 
         /* First prefer explicit damage nodes/attributes if Tidefall exposes
          * one in this render. Keep the selector intentionally broad because
@@ -4020,7 +4186,7 @@
             );
 
             if (value > 0) {
-                return { type: 'hit', damage: value };
+                return { type: 'hit', damage: value, critical };
             }
         }
 
@@ -4029,7 +4195,6 @@
         const damagePatterns = [
             /(?:damage|dmg)\D{0,18}([\d,]+(?:\.\d+)?)/i,
             /([\d,]+(?:\.\d+)?)\s*(?:damage|dmg)\b/i,
-            /(?:hull|crew|rigging)\D{0,18}([\d,]+(?:\.\d+)?)/i,
             /(?:for|dealt?|deals?|hit(?:s)?(?:\s+for)?)\D{0,18}([\d,]+(?:\.\d+)?)/i
         ];
 
@@ -4039,7 +4204,7 @@
 
             const damage = numberFromText(match[1]);
             if (damage > 0) {
-                return { type: 'hit', damage };
+                return { type: 'hit', damage, critical };
             }
         }
 
@@ -4065,7 +4230,8 @@
         if (uniqueCandidates.length === 1) {
             return {
                 type: 'hit',
-                damage: uniqueCandidates[0]
+                damage: uniqueCandidates[0],
+                critical
             };
         }
 
@@ -4174,6 +4340,20 @@
 
         combatDamageTotal += damage;
         combatDamageHits += 1;
+
+        if (event.critical) {
+            combatDamageCrits += 1;
+        }
+
+        if (event.parts) {
+            combatDamageHull +=
+                Number(event.parts.hull) || 0;
+            combatDamageCrew +=
+                Number(event.parts.crew) || 0;
+            combatDamageRigging +=
+                Number(event.parts.rigging) || 0;
+        }
+
         combatDamageMin = Math.min(
             combatDamageMin,
             damage
@@ -4193,8 +4373,7 @@
         }
 
         document.querySelectorAll(
-            '.log-entry.log-combat.combat-row--outgoing-hit[data-sent-at], ' +
-            '.log-entry.log-combat.combat-row--miss[data-sent-at]'
+            OUTGOING_DAMAGE_SELECTOR
         ).forEach(processDamageEvent);
     }
 
@@ -4264,6 +4443,14 @@
                     : 0,
             damageMax:
                 combatDamageMax,
+            damageCrits:
+                combatDamageCrits,
+            damageHull:
+                combatDamageHull,
+            damageCrew:
+                combatDamageCrew,
+            damageRigging:
+                combatDamageRigging,
             foodBreakdown:
                 getFoodConsumedBreakdown(),
             kitsBreakdown:
@@ -4432,10 +4619,22 @@
                 ) {
                     rows.push(
                         [
-                            'DMG',
+                            'DPS',
                             Math.round(
-                                Number(session.damageAverage) || 0
+                                Number(session.damageDps) || 0
                             ).toLocaleString()
+                        ],
+                        [
+                            'Crits',
+                            Math.round(
+                                Number(session.damageCrits) || 0
+                            ).toLocaleString()
+                        ],
+                        [
+                            'H/C/R',
+                            `${Math.round(Number(session.damageHull) || 0).toLocaleString()} / ` +
+                            `${Math.round(Number(session.damageCrew) || 0).toLocaleString()} / ` +
+                            `${Math.round(Number(session.damageRigging) || 0).toLocaleString()}`
                         ],
                         [
                             'Avg Hit',
@@ -4549,6 +4748,7 @@
         'Ammo Cost', 'Food Cost', 'Repair Cost', 'Cannon Wear Cost',
         'Net Gold', 'Net Gold/hr', 'XP/hr', 'Damage Total', 'Damage Hits',
         'Damage Misses', 'Avg Hit', 'Min Hit', 'Max Hit', 'DPS',
+        'Crits', 'Hull Damage', 'Crew Damage', 'Rigging Damage',
         'Food Consumed', 'Kits Consumed'
     ];
 
@@ -4574,6 +4774,10 @@
             Math.round(Number(session.damageMin) || 0),
             Math.round(Number(session.damageMax) || 0),
             Number(session.damageDps || 0).toFixed(1),
+            Math.round(Number(session.damageCrits) || 0),
+            Math.round(Number(session.damageHull) || 0),
+            Math.round(Number(session.damageCrew) || 0),
+            Math.round(Number(session.damageRigging) || 0),
             formatBreakdownForCsv(session.foodBreakdown),
             formatBreakdownForCsv(session.kitsBreakdown)
         ];
@@ -7875,7 +8079,7 @@
         setTextIfChanged(
             damageDpsElement,
             combatDamageHits > 0
-                ? Math.round(average).toLocaleString()
+                ? Math.round(getCombatDps()).toLocaleString()
                 : '—'
         );
         setTextIfChanged(
@@ -7917,6 +8121,26 @@
             Number.isFinite(accuracy)
                 ? `${accuracy.toFixed(1)}%`
                 : '—'
+        );
+        setTextIfChanged(
+            damageCritsElement,
+            combatDamageHits > 0
+                ? `${combatDamageCrits.toLocaleString()} (${(
+                    combatDamageCrits / combatDamageHits * 100
+                ).toFixed(1)}%)`
+                : '—'
+        );
+        setTextIfChanged(
+            damageHullElement,
+            Math.round(combatDamageHull).toLocaleString()
+        );
+        setTextIfChanged(
+            damageCrewElement,
+            Math.round(combatDamageCrew).toLocaleString()
+        );
+        setTextIfChanged(
+            damageRiggingElement,
+            Math.round(combatDamageRigging).toLocaleString()
         );
     }
 
@@ -14749,7 +14973,7 @@
                     'Combat Damage Tracker',
 
                 description:
-                    'Track observed DMG (average volley damage), minimum and maximum hit, total damage, hits, misses, and accuracy from Tidefall combat events.',
+                    'Track observed DMG (average volley damage), DPS, critical hits, per-type hull/crew/rigging totals, minimum and maximum hit, total damage, hits, misses, and accuracy from Tidefall combat events.',
 
                 toggleKey:
                     'combatDamageTrackerEnabled'
@@ -16007,8 +16231,7 @@
             if (!(node instanceof Element)) return;
 
             const damageSelector =
-                '.log-entry.log-combat.combat-row--outgoing-hit[data-sent-at], ' +
-                '.log-entry.log-combat.combat-row--miss[data-sent-at]';
+                OUTGOING_DAMAGE_SELECTOR;
 
             if (node.matches?.(damageSelector)) {
                 candidates.add(node);
