@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.15
+// @version      1.16
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history (with itemized food/repair-kit consumption and CSV export), and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -25,8 +25,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.15';
-    const FIRST_MATE_BUILD_ID = '2026-08-26-crit-damage-tracking';
+    const FIRST_MATE_VERSION = '1.16';
+    const FIRST_MATE_BUILD_ID = '2026-08-29-level-cap-and-hide-delay';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -298,6 +298,13 @@
     const ACTIVITY_SCAN_INTERVAL = 250;
 
     const COMBAT_GRACE_PERIOD = 30000;
+
+    /*
+     * Tidefall skills stop at level 100. There is no next level to
+     * count toward, so every "to Level" readout is hidden once a
+     * skill reaches the cap rather than advertising a level 101.
+     */
+    const MAX_SKILL_LEVEL = 100;
 
     /*
      * Activity estimates are established as soon
@@ -2875,6 +2882,11 @@
             '#tf-kills-to-level'
         );
 
+    const killsLevelRow =
+        killsLevelLabel?.closest(
+            '.tf-stat-row'
+        );
+
     const netGoldElement =
         combatPanel.querySelector(
             '#tf-net-gold'
@@ -3742,6 +3754,11 @@
     const activityLevelValue =
         activityPanel.querySelector(
             '#tf-activity-level-value'
+        );
+
+    const activityLevelRow =
+        activityLevelLabel?.closest(
+            '.tf-stat-row'
         );
 
     const activityQueueRow =
@@ -6724,6 +6741,13 @@
         };
     }
 
+    function isSkillMaxed(level) {
+        const value = Number(level);
+
+        return Number.isFinite(value) &&
+            value >= MAX_SKILL_LEVEL;
+    }
+
     function getSkillLevel(skill) {
         const card =
             getSkillCard(skill);
@@ -8195,6 +8219,13 @@
                 ? '—'
                 : killsRemaining
                     .toLocaleString()
+        );
+
+        setDisplayIfChanged(
+            killsLevelRow,
+            isSkillMaxed(level)
+                ? 'none'
+                : ''
         );
 
         const net =
@@ -12480,6 +12511,15 @@
             );
         }
 
+        setDisplayIfChanged(
+            activityLevelRow,
+            isSkillMaxed(
+                getSkillLevel(activitySkill)
+            )
+                ? 'none'
+                : ''
+        );
+
         setTextIfChanged(
             activitySkillElement,
             `${titleCaseSkill(activitySkill)} • ${activityTaskName}`
@@ -13246,6 +13286,15 @@
             killsRemaining === null
                 ? '—'
                 : killsRemaining.toLocaleString()
+        );
+
+        setDisplayIfChanged(
+            combatHeaderLayout.querySelector(
+                '[data-kind="level"]'
+            ),
+            isSkillMaxed(level)
+                ? 'none'
+                : ''
         );
 
         setTextIfChanged(
@@ -14025,6 +14074,17 @@
                 '#tf-header-level'
             ),
             levelValue
+        );
+
+        setDisplayIfChanged(
+            activityHeaderLayout.querySelector(
+                '[data-kind="level"]'
+            ),
+            isSkillMaxed(
+                getSkillLevel(activitySkill)
+            )
+                ? 'none'
+                : ''
         );
 
         const queueStat =
@@ -14835,6 +14895,12 @@
                                             '60',
                                         label:
                                             '60 seconds'
+                                    },
+                                    {
+                                        value:
+                                            '300',
+                                        label:
+                                            '5 minutes'
                                     },
                                     {
                                         value:
