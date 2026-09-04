@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.16
+// @version      1.24
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history (with itemized food/repair-kit consumption and CSV export), and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -21,12 +21,25 @@
     const ACTIVITY_POSITION_KEY = 'tf-activity-panel-position-v1';
     const ACTIVITY_HISTORY_KEY = 'tf-activity-history-v1';
     const COMBAT_HISTORY_KEY = 'tf-combat-session-history-v1';
+    const MASTERY_STORAGE_KEY = 'tf-firstmate-mastery-v1';
+    const HUD_DOCK_POSITION_KEY = 'tf-hud-dock-position-v1';
+
+    /*
+     * Every size in the tracker bar is a multiple of --tf-hud-scale, so these
+     * four steps drive text, padding, gaps and the task-name width together.
+     */
+    const HUD_TRACKER_SCALES = {
+        sm: 0.85,
+        md: 1,
+        lg: 1.25,
+        xl: 1.5
+    };
     const QUEUE_DEBUG_POSITION_KEY = 'tf-queue-debug-position-v1';
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.16';
-    const FIRST_MATE_BUILD_ID = '2026-08-29-level-cap-and-hide-delay';
+    const FIRST_MATE_VERSION = '1.24';
+    const FIRST_MATE_BUILD_ID = '2026-09-04-mastery-panel-read';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -74,6 +87,8 @@
 
         combatShowNetGold: true,
         combatPerHourMetric: 'net',
+
+        hudTrackerScale: 'md',
 
         skillProgressPercentEnabled: false,
 
@@ -645,10 +660,55 @@
             itemId
         );
 
+        /*
+         * Tidefall renumbered the combat item IDs (Salted Mackerel moved from
+         * 221 to 122, Patch Kit from 231 to 132). The built-in vendor prices
+         * are keyed by the old IDs, so a learned item would otherwise have no
+         * price at all: consumable costs would read zero and the Price Missing
+         * warning would fire permanently. Carry the price over by name before
+         * the name index is repointed at the new ID.
+         */
+        const legacyItemId =
+            ITEM_ID_BY_NAME.get(
+                normalizeItemName(itemName)
+            );
+
+        const legacyVendorPrice =
+            Number(
+                BUILT_IN_VENDOR_PRICES[legacyItemId]
+            ) || 0;
+
         ITEM_ID_BY_NAME.set(
             normalizeItemName(itemName),
             itemId
         );
+
+        if (
+            legacyVendorPrice > 0 &&
+            !BUILT_IN_VENDOR_PRICES[itemId]
+        ) {
+            BUILT_IN_VENDOR_PRICES[itemId] =
+                legacyVendorPrice;
+
+            setCachedMarketData(
+                itemId,
+                {
+                    vendorPrice:
+                        legacyVendorPrice,
+                    vendorSource:
+                        'Built-in Vendor'
+                }
+            );
+
+            console.info(
+                '[Tidefall First Mate] Carried vendor price',
+                legacyVendorPrice,
+                'from item',
+                legacyItemId,
+                'to renumbered item',
+                itemId
+            );
+        }
 
         if (isAmmo) {
             AMMO_IDS.add(itemId);
@@ -851,6 +911,236 @@
             : '—';
     }
 
+    // =========================================================
+    // MASTERY (read from the game's Mastery panel)
+    // =========================================================
+
+    const MASTERY_SKILLS = [
+        'logging', 'mining', 'fishing', 'carpentry',
+        'smelting', 'cooking', 'smithing', 'crafting'
+    ];
+
+    /*
+     * Mastery survives the panel being closed: the DOM only exists while the
+     * player has Mastery open, so the last good read is persisted and reused.
+     */
+    let masteryPoints = {};
+
+    try {
+        const saved =
+            JSON.parse(
+                localStorage.getItem(
+                    MASTERY_STORAGE_KEY
+                ) || '{}'
+            );
+
+        if (saved && typeof saved === 'object') {
+            masteryPoints = saved;
+        }
+    } catch {
+        masteryPoints = {};
+    }
+
+    function saveMasteryPoints() {
+        try {
+            localStorage.setItem(
+                MASTERY_STORAGE_KEY,
+                JSON.stringify(masteryPoints)
+            );
+        } catch (error) {
+            console.warn(
+                '[FirstMate Tools] Could not save mastery:',
+                error
+            );
+        }
+    }
+
+    function readMasteryLanePoints(card, track) {
+        const lane =
+            card?.querySelector?.(
+                `.sm-tree-lane--${track}`
+            );
+
+        if (!lane) {
+            return null;
+        }
+
+        /*
+         * The lane footer carries "N/9" directly, which is the most reliable
+         * read. Fall back to the bonus chip when the footer is absent.
+         */
+        const footerMatch =
+            String(
+                lane.querySelector(
+                    '.sm-tree-lane__foot'
+                )?.textContent || ''
+            ).match(/(\d+)\s*\/\s*9\b/);
+
+        if (footerMatch) {
+            const points = Number(footerMatch[1]);
+
+            if (
+                Number.isInteger(points) &&
+                points >= 0 &&
+                points <= 9
+            ) {
+                return points;
+            }
+        }
+
+        const bonusText =
+            String(
+                lane.querySelector(
+                    '.sm-tree-lane__bonus'
+                )?.textContent || ''
+            );
+
+        if (track === 'yield') {
+            /*
+             * Each yield point is +20%, so 180% is nine points. Note this is
+             * extra output on top of the base, not a total multiplier.
+             */
+            const match =
+                bonusText.match(/\+\s*(\d{1,3})\s*%/);
+
+            if (match) {
+                const percent = Number(match[1]);
+
+                if (
+                    percent >= 0 &&
+                    percent <= 180 &&
+                    percent % 20 === 0
+                ) {
+                    return percent / 20;
+                }
+            }
+
+            return null;
+        }
+
+        const match =
+            bonusText.match(/\+\s*(\d{1,2})\s*XP\b/i);
+
+        if (match) {
+            const points = Number(match[1]);
+
+            if (
+                Number.isInteger(points) &&
+                points >= 0 &&
+                points <= 9
+            ) {
+                return points;
+            }
+        }
+
+        return null;
+    }
+
+    function scanMasteryFromPage() {
+        const cells =
+            document.querySelectorAll(
+                '.sm-tree-grid__cell[data-skill-key]'
+            );
+
+        if (!cells.length) {
+            return 0;
+        }
+
+        let changed = false;
+        let found = 0;
+
+        cells.forEach(cell => {
+            const skill =
+                String(
+                    cell.dataset.skillKey || ''
+                ).toLowerCase();
+
+            if (!MASTERY_SKILLS.includes(skill)) {
+                return;
+            }
+
+            const card =
+                cell.querySelector('.sm-tree-card') ||
+                cell;
+
+            const experience =
+                readMasteryLanePoints(card, 'experience');
+
+            const yieldPoints =
+                readMasteryLanePoints(card, 'yield');
+
+            if (
+                experience === null &&
+                yieldPoints === null
+            ) {
+                return;
+            }
+
+            const next = {
+                experience: experience ?? 0,
+                yield: yieldPoints ?? 0
+            };
+
+            const current =
+                masteryPoints[skill];
+
+            if (
+                current?.experience !== next.experience ||
+                current?.yield !== next.yield
+            ) {
+                masteryPoints[skill] = next;
+                changed = true;
+            }
+
+            found += 1;
+        });
+
+        if (changed) {
+            saveMasteryPoints();
+
+            console.info(
+                '[Tidefall First Mate] Mastery updated from panel:',
+                masteryPoints
+            );
+        }
+
+        return found;
+    }
+
+    /*
+     * Flat XP added per action, confirmed in game: nine points is +9 XP, not
+     * a multiplier.
+     */
+    function getMasteryXPBonus(skill) {
+        const points =
+            Number(
+                masteryPoints[
+                    String(skill || '').toLowerCase()
+                ]?.experience
+            );
+
+        return Number.isFinite(points)
+            ? Math.max(0, Math.min(9, points))
+            : null;
+    }
+
+    /*
+     * Output multiplier including the base: nine points is +180% extra, so
+     * 2.8x total, not 1.8x.
+     */
+    function getMasteryYieldMultiplier(skill) {
+        const points =
+            Number(
+                masteryPoints[
+                    String(skill || '').toLowerCase()
+                ]?.yield
+            );
+
+        return Number.isFinite(points)
+            ? 1 + Math.max(0, Math.min(9, points)) * 0.2
+            : null;
+    }
+
     function titleCaseSkill(skill) {
         if (!skill) {
             return 'Activity';
@@ -1039,15 +1329,14 @@
 
             width: 270px;
 
-            background: rgba(30, 34, 36, 0.97);
+            background: #05070a;
 
             color:
                 var(--text-primary, #e8e0d0);
 
-            border: 1px solid rgba(197, 160, 89, 0.62);
+            border: 1px solid #c5a05959;
 
-            border-radius:
-                var(--radius-md, .545rem);
+            border-radius: 4px;
 
             box-shadow:
                 var(--shadow-md, 0 4px 12px #00000080),
@@ -1143,7 +1432,7 @@
 
             padding: 10px 12px;
 
-            background: linear-gradient(180deg, rgba(24, 25, 25, 0.97) 0%, rgba(7, 7, 13, 0.97) 100%);
+            background: linear-gradient(180deg, #181919 0%, #07070d 100%);
 
             border-bottom:
                 1px solid #c5a05933;
@@ -2092,30 +2381,92 @@
             opacity: .35;
         }
 
-        #tf-activity-header-layout {
-            position: absolute;
-            left: 50%;
-            top: 50%;
-            transform: translate(-50%, -50%);
+        /*
+         * Tidefall's command-shell UI removed the old full-width top header
+         * that both tracker bars used to mount inside, so First Mate now owns
+         * its own fixed dock. It sits below #command-header and to the right
+         * of #command-rail, using the shell's own layout variables with
+         * fallbacks for the mobile layout where those are not defined.
+         */
+        #tf-hud-dock {
+            --tf-hud-scale: 1;
 
-            z-index: 5;
+            position: fixed;
+
+            top: calc(var(--shell-header-height, 5.5rem) + .9rem);
+            left: calc(var(--shell-nav-width, 0rem) + var(--panel-gap, 1rem));
+            right: var(--panel-gap, 1rem);
+
+            z-index: 1400;
+
+            display: flex;
+            /*
+             * Left-aligned against the nav rail rather than centred: the top
+             * strip is taken by #command-header on the left and, whenever a
+             * quest is running, #active-quest-hud on the right, so a centred
+             * bar collides with the quest HUD on narrower viewports. The band
+             * directly under the header is the one region no game UI uses.
+             */
+            justify-content: flex-start;
+
+            pointer-events: none;
+        }
+
+        /*
+         * A free-positioned dock shrink-wraps its bar so the draggable area
+         * matches what the player can actually see.
+         */
+        #tf-hud-dock.tf-hud-dock--free {
+            right: auto;
+        }
+
+        #tf-hud-dock.tf-hud-dock--dragging {
+            user-select: none;
+        }
+
+        /*
+         * Overlay panels and modal shells cover the map. Step out of the way
+         * rather than floating the tracker over whatever the player opened.
+         */
+        body:has(.overlay-panel--open) #tf-hud-dock,
+        body:has(.ms-shell:not([hidden])) #tf-hud-dock {
+            display: none;
+        }
+
+        #tf-activity-header-layout,
+        #tf-combat-header-layout {
+            position: relative;
 
             display: none;
             align-items: center;
-            justify-content: center;
 
-            gap: 10px;
+            gap: calc(1.1rem * var(--tf-hud-scale, 1));
+            max-width: 100%;
 
-            height: 40px;
-            max-width: calc(100% - 760px);
-
-            padding: 0 10px;
+            padding:
+                calc(.5rem * var(--tf-hud-scale, 1))
+                calc(1.1rem * var(--tf-hud-scale, 1));
 
             color: var(--text-primary, #e8e0d0);
             font-family: var(--font-body, "Gothic A1", sans-serif);
 
+            background: rgba(5, 7, 10, .92);
+            border: 1px solid rgba(197, 160, 89, .3);
+            border-radius: 4px;
+
+            box-shadow:
+                var(--shadow-md, 0 4px 12px #00000080);
+
             white-space: nowrap;
-            pointer-events: none;
+            overflow: hidden;
+
+            /*
+             * The bar itself accepts pointer events so it can be dragged.
+             * Individual stats that already have click handlers opt out of
+             * starting a drag, so History/Cost/Damage clicks still work.
+             */
+            pointer-events: auto;
+            cursor: move;
         }
 
         #tf-activity-header-layout.tf-active {
@@ -2125,7 +2476,7 @@
         .tf-activity-header-title {
             color: var(--gold, #c5a059);
             font-family: var(--font-heading, "QuadraatOffcPro", Georgia, serif);
-            font-size: 11px;
+            font-size: calc(11px * var(--tf-hud-scale, 1));
             font-weight: 700;
             letter-spacing: .08em;
             text-transform: uppercase;
@@ -2135,9 +2486,9 @@
         .tf-activity-header-stat {
             display: flex;
             align-items: baseline;
-            gap: 4px;
+            gap: calc(4px * var(--tf-hud-scale, 1));
 
-            padding-left: 9px;
+            padding-left: calc(9px * var(--tf-hud-scale, 1));
 
             border-left:
                 1px solid rgba(197, 160, 89, .18);
@@ -2145,14 +2496,14 @@
 
         .tf-activity-header-label {
             color: var(--text-secondary, #d4be8ca6);
-            font-size: 9px;
+            font-size: calc(9px * var(--tf-hud-scale, 1));
             letter-spacing: .05em;
             text-transform: uppercase;
         }
 
         .tf-activity-header-value {
             color: var(--reward-xp, #aee67a);
-            font-size: 11px;
+            font-size: calc(11px * var(--tf-hud-scale, 1));
             font-weight: 700;
         }
 
@@ -2161,14 +2512,14 @@
         }
 
         .tf-activity-header-task {
-            max-width: 180px;
+            max-width: calc(180px * var(--tf-hud-scale, 1));
 
             overflow: hidden;
             text-overflow: ellipsis;
 
             color: var(--text-secondary, #d4be8ca6);
 
-            font-size: 10px;
+            font-size: calc(10px * var(--tf-hud-scale, 1));
         }
 
         .tf-activity-header-stat[data-kind="queue"],
@@ -2430,28 +2781,6 @@
         }
 
 
-        #tf-combat-header-layout {
-            position: absolute;
-            left: 50%;
-            top: 50%;
-            transform: translate(-50%, -50%);
-            z-index: 6;
-
-            display: none;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-
-            height: 40px;
-            max-width: calc(100% - 760px);
-            padding: 0 10px;
-
-            color: var(--text-primary, #e8e0d0);
-            font-family: var(--font-body, "Gothic A1", sans-serif);
-            white-space: nowrap;
-            pointer-events: none;
-        }
-
         #tf-combat-header-layout.tf-active {
             display: flex;
         }
@@ -2459,7 +2788,7 @@
         .tf-combat-header-title {
             color: var(--gold, #c5a059);
             font-family: var(--font-heading, "QuadraatOffcPro", Georgia, serif);
-            font-size: 11px;
+            font-size: calc(11px * var(--tf-hud-scale, 1));
             font-weight: 700;
             letter-spacing: .08em;
             text-transform: uppercase;
@@ -2468,21 +2797,21 @@
         .tf-combat-header-stat {
             display: flex;
             align-items: baseline;
-            gap: 4px;
-            padding-left: 9px;
+            gap: calc(4px * var(--tf-hud-scale, 1));
+            padding-left: calc(9px * var(--tf-hud-scale, 1));
             border-left: 1px solid rgba(197, 160, 89, .18);
         }
 
         .tf-combat-header-label {
             color: var(--text-secondary, #d4be8ca6);
-            font-size: 9px;
+            font-size: calc(9px * var(--tf-hud-scale, 1));
             letter-spacing: .05em;
             text-transform: uppercase;
         }
 
         .tf-combat-header-value {
             color: var(--reward-xp, #aee67a);
-            font-size: 11px;
+            font-size: calc(11px * var(--tf-hud-scale, 1));
             font-weight: 700;
         }
 
@@ -2511,9 +2840,9 @@
         }
 
         @media (max-width: 1700px) {
-            #tf-activity-header-layout {
-                max-width: calc(100% - 650px);
-                gap: 7px;
+            #tf-activity-header-layout,
+            #tf-combat-header-layout {
+                gap: .8rem;
             }
 
             .tf-activity-header-task {
@@ -2531,6 +2860,19 @@
         @media (max-width: 1150px) {
             .tf-activity-header-stat[data-kind="items"] {
                 display: none;
+            }
+        }
+
+        /*
+         * Below Tidefall's 768px breakpoint the command rail and header are
+         * hidden and #header-live takes the top strip, so dock beneath that
+         * instead of beneath a header that is not on screen.
+         */
+        @media (max-width: 767px) {
+            #tf-hud-dock {
+                top: 6.4rem;
+                left: .8rem;
+                right: .8rem;
             }
         }
     `;
@@ -5535,10 +5877,12 @@
                             slot.dataset.itemtype
                         );
 
-                    if (!CANNON_IDS.has(itemId)) {
-                        return;
-                    }
-
+                    /*
+                     * A condition badge only ever appears on a cannon, so trust
+                     * it over the ID list. Combat item IDs were renumbered once
+                     * already; if the cannon IDs move too, matching on
+                     * CANNON_IDS alone would stop wear tracking with no error.
+                     */
                     const conditionElement =
                         slot.querySelector(
                             '.mp-cannon-condition'
@@ -5546,6 +5890,19 @@
 
                     if (!conditionElement) {
                         return;
+                    }
+
+                    if (
+                        Number.isFinite(itemId) &&
+                        itemId > 0 &&
+                        !CANNON_IDS.has(itemId)
+                    ) {
+                        CANNON_IDS.add(itemId);
+
+                        console.info(
+                            '[Tidefall First Mate] Learned cannon item:',
+                            itemId
+                        );
                     }
 
                     const raw =
@@ -9032,10 +9389,22 @@
         if (base) {
             const modifiers =
                 getCurrentProfessionModifiers();
+
+            /*
+             * The Mastery panel is authoritative when it has been read.
+             * Inference from observed XP only works once enough cycles have
+             * been watched, and is wrong outright when the base recipe table
+             * is stale.
+             */
+            const panelMasteryXP =
+                getMasteryXPBonus(activitySkill);
+
             let masteryXP =
+                panelMasteryXP ??
                 modifiers.masteryXP;
 
             if (
+                panelMasteryXP === null &&
                 activityActions > 0 &&
                 activityTotalXP > 0
             ) {
@@ -11010,18 +11379,25 @@
                 )?.xpPerAction;
         }
 
+        const panelMasteryXP =
+            getMasteryXPBonus(activitySkill);
+
         const masteryXP =
-            Number.isFinite(observedXP)
-                ? Math.max(
-                    0,
-                    Math.min(
-                        9,
-                        Math.round(
-                            observedXP - base.xp
+            panelMasteryXP !== null
+                ? panelMasteryXP
+                : (
+                    Number.isFinite(observedXP)
+                        ? Math.max(
+                            0,
+                            Math.min(
+                                9,
+                                Math.round(
+                                    observedXP - base.xp
+                                )
+                            )
                         )
-                    )
-                )
-                : 0;
+                        : 0
+                );
 
         /*
          * Prefer Tidefall's exact active-task end timer when
@@ -12704,6 +13080,29 @@
     const STARTUP_CAMERA_DELAY_MS =
         6000;
 
+    /*
+     * The command-shell UI moved the follow camera out of #map-controls and
+     * into the map taskbar, so the old #map-btn-follow lookup returned null and
+     * Startup Follow Ship silently did nothing. Prefer the new control and fall
+     * back to the legacy id so older builds keep working.
+     */
+    const FOLLOW_SHIP_SELECTOR = [
+        '#map-taskbar-slot-follow',
+        '[data-map-action="follow"]',
+        '#map-btn-follow'
+    ].join(', ');
+
+    function getFollowShipButton() {
+        const button =
+            document.querySelector(
+                FOLLOW_SHIP_SELECTOR
+            );
+
+        return button instanceof HTMLElement
+            ? button
+            : null;
+    }
+
     function waitMilliseconds(
         milliseconds
     ) {
@@ -12739,9 +13138,7 @@
             attempt += 1
         ) {
             const followButton =
-                document.querySelector(
-                    '#map-btn-follow'
-                );
+                getFollowShipButton();
 
             if (
                 followButton instanceof
@@ -12924,9 +13321,7 @@
         }
 
         const followButton =
-            document.querySelector(
-                '#map-btn-follow'
-            );
+            getFollowShipButton();
 
         if (
             !(followButton instanceof HTMLElement)
@@ -12983,9 +13378,7 @@
         }
 
         const followButton =
-            document.querySelector(
-                '#map-btn-follow'
-            );
+            getFollowShipButton();
 
         if (
             !(followButton instanceof HTMLElement)
@@ -13130,23 +13523,15 @@
         const bar =
             buildCombatHeaderLayout();
 
-        const header =
-            findTidefallTopHeader();
+        const dock =
+            getFirstMateHudDock();
 
-        if (!header) {
+        if (!dock) {
             return false;
         }
 
-        if (
-            window.getComputedStyle(header)
-                .position === 'static'
-        ) {
-            header.style.position =
-                'relative';
-        }
-
-        if (bar.parentElement !== header) {
-            header.appendChild(bar);
+        if (bar.parentElement !== dock) {
+            dock.appendChild(bar);
         }
 
         return true;
@@ -13337,57 +13722,358 @@
     let activityHeaderLayout =
         null;
 
-    let tidefallTopHeaderCache =
+    let firstMateHudDock =
         null;
 
-    function findTidefallTopHeader() {
-        if (
-            tidefallTopHeaderCache?.isConnected
-        ) {
-            return tidefallTopHeaderCache;
-        }
+    /*
+     * Previously this hunted for Tidefall's old top header (the strip with
+     * "Sailors Online" / "Sailed Today") and mounted both tracker bars inside
+     * it. The command-shell UI removed that element, so the search returned
+     * null and every header-mode tracker silently disappeared. First Mate now
+     * creates and owns its own dock, which cannot be taken away by a UI
+     * rewrite, and positions it with CSS against the shell's own variables.
+     */
+    /*
+     * Stats with their own click handlers must not begin a drag, otherwise
+     * opening the cost/damage/history windows would be impossible.
+     */
+    const HUD_DOCK_NO_DRAG_SELECTOR = [
+        '[data-kind="gold"]',
+        '[data-kind="dps"]',
+        '[data-kind="queue"]',
+        '[data-kind="xp"]',
+        '.tf-combat-header-title'
+    ].join(', ');
 
-        const candidates =
-            Array.from(
-                document.querySelectorAll(
-                    'header, nav, body > div, body > section'
+    function clampHudDockPosition(
+        dock,
+        left,
+        top
+    ) {
+        const rect =
+            dock.getBoundingClientRect();
+
+        /*
+         * Keep a grabbable strip on screen no matter how far the player
+         * drags, and cope with the bar having no width yet (both trackers
+         * hidden) by falling back to a sane minimum.
+         */
+        const width =
+            Math.max(rect.width, 40);
+
+        const height =
+            Math.max(rect.height, 24);
+
+        return {
+            left:
+                Math.max(
+                    0,
+                    Math.min(
+                        left,
+                        window.innerWidth - width
+                    )
+                ),
+            top:
+                Math.max(
+                    0,
+                    Math.min(
+                        top,
+                        window.innerHeight - height
+                    )
                 )
+        };
+    }
+
+    function applyHudDockPosition(
+        dock,
+        left,
+        top
+    ) {
+        const clamped =
+            clampHudDockPosition(
+                dock,
+                left,
+                top
             );
 
-        tidefallTopHeaderCache =
-            candidates.find(
-                element => {
-                    const text =
-                        element.textContent
-                            ?.replace(/\s+/g, ' ')
-                            .trim()
-                            .toUpperCase() || '';
+        dock.classList.add(
+            'tf-hud-dock--free'
+        );
 
-                    if (
-                        !text.includes(
-                            'SAILORS ONLINE'
-                        ) ||
-                        !text.includes(
-                            'SAILED TODAY'
-                        )
-                    ) {
-                        return false;
-                    }
+        dock.style.left =
+            `${Math.round(clamped.left)}px`;
 
-                    const rect =
-                        element.getBoundingClientRect();
+        dock.style.top =
+            `${Math.round(clamped.top)}px`;
 
-                    return (
-                        rect.top <= 5 &&
-                        rect.height > 30 &&
-                        rect.height < 120 &&
-                        rect.width >
-                            window.innerWidth * .7
-                    );
+        return clamped;
+    }
+
+    function saveHudDockPosition(dock) {
+        const rect =
+            dock.getBoundingClientRect();
+
+        try {
+            localStorage.setItem(
+                HUD_DOCK_POSITION_KEY,
+                JSON.stringify({
+                    left:
+                        Math.round(rect.left),
+                    top:
+                        Math.round(rect.top)
+                })
+            );
+        } catch (error) {
+            console.warn(
+                '[FirstMate Tools] Could not save HUD position:',
+                error
+            );
+        }
+    }
+
+    function restoreHudDockPosition(dock) {
+        try {
+            const saved =
+                JSON.parse(
+                    localStorage.getItem(
+                        HUD_DOCK_POSITION_KEY
+                    ) || 'null'
+                );
+
+            if (
+                !saved ||
+                !Number.isFinite(saved.left) ||
+                !Number.isFinite(saved.top)
+            ) {
+                return;
+            }
+
+            applyHudDockPosition(
+                dock,
+                saved.left,
+                saved.top
+            );
+        } catch (error) {
+            console.warn(
+                '[FirstMate Tools] Could not restore HUD position:',
+                error
+            );
+        }
+    }
+
+    function resetHudDockPosition() {
+        try {
+            localStorage.removeItem(
+                HUD_DOCK_POSITION_KEY
+            );
+        } catch {
+            // Ignore storage failures.
+        }
+
+        const dock =
+            document.getElementById(
+                'tf-hud-dock'
+            );
+
+        if (!dock) {
+            return;
+        }
+
+        dock.classList.remove(
+            'tf-hud-dock--free'
+        );
+
+        dock.style.left = '';
+        dock.style.top = '';
+        dock.style.right = '';
+    }
+
+    function applyHudTrackerScale() {
+        const dock =
+            document.getElementById(
+                'tf-hud-dock'
+            );
+
+        if (!dock) {
+            return;
+        }
+
+        const scale =
+            HUD_TRACKER_SCALES[
+                settings.hudTrackerScale
+            ] ||
+            HUD_TRACKER_SCALES.md;
+
+        dock.style.setProperty(
+            '--tf-hud-scale',
+            String(scale)
+        );
+
+        /*
+         * Growing the bar can push a free-positioned dock past the edge of
+         * the screen, so re-clamp it against its new size.
+         */
+        if (
+            dock.classList.contains(
+                'tf-hud-dock--free'
+            )
+        ) {
+            const rect =
+                dock.getBoundingClientRect();
+
+            applyHudDockPosition(
+                dock,
+                rect.left,
+                rect.top
+            );
+        }
+    }
+
+    function makeHudDockDraggable(dock) {
+        if (dock.dataset.tfDragBound === '1') {
+            return;
+        }
+
+        dock.dataset.tfDragBound = '1';
+
+        let dragging = false;
+        let offsetX = 0;
+        let offsetY = 0;
+        let moved = false;
+
+        dock.addEventListener(
+            'mousedown',
+            event => {
+                if (
+                    event.button !== 0 ||
+                    event.target?.closest?.(
+                        HUD_DOCK_NO_DRAG_SELECTOR
+                    )
+                ) {
+                    return;
                 }
-            ) || null;
 
-        return tidefallTopHeaderCache;
+                const rect =
+                    dock.getBoundingClientRect();
+
+                /*
+                 * The dock spans the full band while unpositioned, so pin it
+                 * to its current on-screen box before the first drag to stop
+                 * the bar jumping to the cursor.
+                 */
+                applyHudDockPosition(
+                    dock,
+                    rect.left,
+                    rect.top
+                );
+
+                dragging = true;
+                moved = false;
+
+                offsetX =
+                    event.clientX - rect.left;
+
+                offsetY =
+                    event.clientY - rect.top;
+
+                dock.classList.add(
+                    'tf-hud-dock--dragging'
+                );
+
+                event.preventDefault();
+            }
+        );
+
+        document.addEventListener(
+            'mousemove',
+            event => {
+                if (!dragging) {
+                    return;
+                }
+
+                moved = true;
+
+                applyHudDockPosition(
+                    dock,
+                    event.clientX - offsetX,
+                    event.clientY - offsetY
+                );
+            }
+        );
+
+        document.addEventListener(
+            'mouseup',
+            () => {
+                if (!dragging) {
+                    return;
+                }
+
+                dragging = false;
+
+                dock.classList.remove(
+                    'tf-hud-dock--dragging'
+                );
+
+                if (moved) {
+                    saveHudDockPosition(dock);
+                }
+            }
+        );
+
+        /*
+         * A saved position can end up off-screen when the window shrinks or
+         * the player moves to a smaller display.
+         */
+        window.addEventListener(
+            'resize',
+            () => {
+                if (
+                    !dock.classList.contains(
+                        'tf-hud-dock--free'
+                    )
+                ) {
+                    return;
+                }
+
+                const rect =
+                    dock.getBoundingClientRect();
+
+                applyHudDockPosition(
+                    dock,
+                    rect.left,
+                    rect.top
+                );
+            }
+        );
+    }
+
+    function getFirstMateHudDock() {
+        if (firstMateHudDock?.isConnected) {
+            return firstMateHudDock;
+        }
+
+        let dock =
+            document.getElementById(
+                'tf-hud-dock'
+            );
+
+        if (!dock) {
+            dock =
+                document.createElement('div');
+
+            dock.id = 'tf-hud-dock';
+
+            document.body.appendChild(dock);
+        }
+
+        makeHudDockDraggable(dock);
+        restoreHudDockPosition(dock);
+
+        firstMateHudDock = dock;
+
+        applyHudTrackerScale();
+
+        return dock;
     }
 
     function appendHeaderTooltipRow(
@@ -13603,7 +14289,7 @@
         const anchorRect =
             anchorElement.getBoundingClientRect();
         const header =
-            findTidefallTopHeader();
+            getFirstMateHudDock();
         const headerRect =
             header?.getBoundingClientRect?.();
 
@@ -13809,27 +14495,18 @@
         const bar =
             buildActivityHeaderLayout();
 
-        const header =
-            findTidefallTopHeader();
+        const dock =
+            getFirstMateHudDock();
 
-        if (!header) {
+        if (!dock) {
             return false;
         }
 
         if (
-            window.getComputedStyle(
-                header
-            ).position === 'static'
-        ) {
-            header.style.position =
-                'relative';
-        }
-
-        if (
             bar.parentElement !==
-            header
+            dock
         ) {
-            header.appendChild(
+            dock.appendChild(
                 bar
             );
         }
@@ -14706,6 +15383,120 @@
         return card;
     }
 
+    function createHudPositionCard() {
+        const card =
+            document.createElement(
+                'div'
+            );
+
+        card.className =
+            'acp-card tf-firstmate-card';
+
+        const meta =
+            document.createElement(
+                'div'
+            );
+
+        meta.className =
+            'acp-card-meta';
+
+        meta.innerHTML = `
+            <div class="acp-card-title">
+                Tracker Position
+            </div>
+
+            <div class="acp-card-desc">
+                Set the tracker's text size, and drag it anywhere on screen; its position is remembered. Reset to return it below Tidefall's header.
+            </div>
+        `;
+
+        const cardBody =
+            document.createElement(
+                'div'
+            );
+
+        cardBody.className =
+            'acp-card-body';
+
+        const sizeRow =
+            document.createElement(
+                'div'
+            );
+
+        sizeRow.className =
+            'tf-firstmate-select-row';
+
+        const sizeLabel =
+            document.createElement(
+                'span'
+            );
+
+        sizeLabel.className =
+            'tf-firstmate-setting-label';
+
+        sizeLabel.textContent =
+            'Tracker Size';
+
+        sizeRow.append(
+            sizeLabel,
+            createSelect(
+                'hudTrackerScale',
+                [
+                    {
+                        value: 'sm',
+                        label: 'Small'
+                    },
+                    {
+                        value: 'md',
+                        label: 'Medium'
+                    },
+                    {
+                        value: 'lg',
+                        label: 'Large'
+                    },
+                    {
+                        value: 'xl',
+                        label: 'Extra Large'
+                    }
+                ]
+            )
+        );
+
+        cardBody.appendChild(
+            sizeRow
+        );
+
+        const button =
+            document.createElement(
+                'button'
+            );
+
+        button.type =
+            'button';
+
+        button.className =
+            'tf-firstmate-refresh-button';
+
+        button.textContent =
+            'RESET TRACKER POSITION';
+
+        button.addEventListener(
+            'click',
+            resetHudDockPosition
+        );
+
+        cardBody.appendChild(
+            button
+        );
+
+        card.append(
+            meta,
+            cardBody
+        );
+
+        return card;
+    }
+
     function createRefreshCard() {
         const card =
             document.createElement(
@@ -15512,6 +16303,10 @@
         );
 
         displayGroup.appendChild(
+            createHudPositionCard()
+        );
+
+        displayGroup.appendChild(
             createVersionCard()
         );
 
@@ -15615,6 +16410,12 @@
     // =========================================================
 
     function getAccountNav() {
+        /*
+         * The command-shell rewrite renders the account panel through Preact,
+         * so its tab strip may no longer carry the old aria-label. Fall back to
+         * any panel-tabs nav inside #account-panel before giving up, otherwise
+         * the settings tab has nowhere to attach.
+         */
         return Array.from(
             document.querySelectorAll(
                 'nav.panel-tabs'
@@ -15625,7 +16426,11 @@
                     'aria-label'
                 ) ===
                 'Account sections'
-        ) || null;
+        ) ||
+        document.querySelector(
+            '#account-panel nav.panel-tabs'
+        ) ||
+        null;
     }
 
     function closeFirstMateSettings() {
@@ -15899,6 +16704,10 @@
         }
 
         updateQueueDebugVisibility();
+
+        applyHudTrackerScale();
+
+        scanMasteryFromPage();
 
         if (
             settings.skillProgressPercentEnabled
@@ -16625,6 +17434,53 @@
 
 
     void applyStartupDisplayAndCamera();
+
+    /*
+     * Exposed so the tracker can be recovered from the console if it is ever
+     * dragged somewhere unreachable and the settings tab is not available.
+     */
+    /*
+     * Pick up mastery immediately if the panel happens to be open at load,
+     * and expose a manual trigger.
+     */
+    scanMasteryFromPage();
+
+    window.tfScanMastery =
+        () => {
+            const found = scanMasteryFromPage();
+
+            console.log(
+                found
+                    ? `[Tidefall First Mate] Read mastery for ${found} skills.`
+                    : '[Tidefall First Mate] Open the Mastery panel first.'
+            );
+
+            return masteryPoints;
+        };
+
+    window.tfResetHudPosition =
+        resetHudDockPosition;
+
+    /*
+     * Companion to the reset hook: lets the size be changed from the console
+     * when the settings tab is unavailable. Accepts sm / md / lg / xl.
+     */
+    window.tfSetHudScale =
+        size => {
+            if (!HUD_TRACKER_SCALES[size]) {
+                console.warn(
+                    '[Tidefall First Mate] Unknown size. Use one of:',
+                    Object.keys(HUD_TRACKER_SCALES).join(', ')
+                );
+
+                return;
+            }
+
+            updateSetting(
+                'hudTrackerScale',
+                size
+            );
+        };
 
     console.log(
         `[Tidefall First Mate] Loaded v${FIRST_MATE_VERSION} (${FIRST_MATE_BUILD_ID})`
