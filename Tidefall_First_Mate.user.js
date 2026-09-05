@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tidefall First Mate
 // @namespace    tidefall-first-mate
-// @version      1.24
+// @version      1.25
 // @description  Combat and DPS tracking, combat warnings, activity/XP tracking, queue tools, market pricing, session history (with itemized food/repair-kit consumption and CSV export), and First Mate Settings
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=playtidefall.com
 // @match        https://www.playtidefall.com/*
@@ -38,8 +38,8 @@
     const QUEUE_DEBUG_STATE_KEY = 'tf-queue-debug-state-v1';
     const DEVELOPER_TOOLS_SECTION_KEY = 'tf-developer-tools-section-open-v1';
 
-    const FIRST_MATE_VERSION = '1.24';
-    const FIRST_MATE_BUILD_ID = '2026-09-04-mastery-panel-read';
+    const FIRST_MATE_VERSION = '1.25';
+    const FIRST_MATE_BUILD_ID = '2026-09-04-position-fix-mono';
     const FIRST_MATE_GITHUB_URL =
         'https://github.com/UserCarl/tidefall-first-mate';
 
@@ -1698,13 +1698,13 @@
         #tf-xp-gained,
         #tf-kills-to-level {
             color:
-                var(--reward-xp, #aee67a);
+                var(--text-primary, #e8e0d0);
         }
 
         #tf-net-gold,
         #tf-per-hour-value {
             color:
-                var(--reward-gold, #f0c45c);
+                var(--text-primary, #e8e0d0);
         }
 
         #tf-net-gold-row {
@@ -1764,7 +1764,7 @@
             margin-top: 10px;
             padding-top: 8px;
             border-top: 1px solid rgba(255, 255, 255, .12);
-            color: var(--reward-gold, #f0c45c);
+            color: var(--text-primary, #e8e0d0);
             font-size: 10px;
             font-weight: 700;
             letter-spacing: .08em;
@@ -1787,7 +1787,7 @@
         }
 
         .tf-cost-row.tf-positive strong {
-            color: var(--reward-gold, #f0c45c);
+            color: var(--text-primary, #e8e0d0);
         }
 
         .tf-cost-row.tf-negative strong {
@@ -1883,7 +1883,7 @@
         #tf-activity-xp-hour,
         #tf-activity-level-value {
             color:
-                var(--reward-xp, #aee67a);
+                var(--text-primary, #e8e0d0);
         }
 
         #tf-activity-items-hour {
@@ -2096,7 +2096,7 @@
             padding-left: 8px;
 
             color:
-                var(--reward-xp, #aee67a);
+                var(--text-primary, #e8e0d0);
 
             font-family:
                 var(--font-body, "Gothic A1", sans-serif);
@@ -2451,7 +2451,7 @@
             font-family: var(--font-body, "Gothic A1", sans-serif);
 
             background: rgba(5, 7, 10, .92);
-            border: 1px solid rgba(197, 160, 89, .3);
+            border: 1px solid #ffffff1f;
             border-radius: 4px;
 
             box-shadow:
@@ -2491,7 +2491,7 @@
             padding-left: calc(9px * var(--tf-hud-scale, 1));
 
             border-left:
-                1px solid rgba(197, 160, 89, .18);
+                1px solid #ffffff14;
         }
 
         .tf-activity-header-label {
@@ -2502,7 +2502,7 @@
         }
 
         .tf-activity-header-value {
-            color: var(--reward-xp, #aee67a);
+            color: var(--text-primary, #e8e0d0);
             font-size: calc(11px * var(--tf-hud-scale, 1));
             font-weight: 700;
         }
@@ -2799,7 +2799,7 @@
             align-items: baseline;
             gap: calc(4px * var(--tf-hud-scale, 1));
             padding-left: calc(9px * var(--tf-hud-scale, 1));
-            border-left: 1px solid rgba(197, 160, 89, .18);
+            border-left: 1px solid #ffffff14;
         }
 
         .tf-combat-header-label {
@@ -2810,7 +2810,7 @@
         }
 
         .tf-combat-header-value {
-            color: var(--reward-xp, #aee67a);
+            color: var(--text-primary, #e8e0d0);
             font-size: calc(11px * var(--tf-hud-scale, 1));
             font-weight: 700;
         }
@@ -2821,7 +2821,7 @@
 
         .tf-combat-header-stat[data-kind="gold"] .tf-combat-header-value,
         .tf-combat-header-stat[data-kind="perhour"] .tf-combat-header-value {
-            color: var(--reward-gold, #f0c45c);
+            color: var(--text-primary, #e8e0d0);
         }
 
         .tf-combat-header-stat[data-kind="dps"] .tf-combat-header-value {
@@ -13789,16 +13789,30 @@
         left,
         top
     ) {
+        /*
+         * Shrink-wrap BEFORE measuring. While the dock is still in its default
+         * state the stylesheet applies right: var(--panel-gap), so it spans the
+         * whole band and getBoundingClientRect reports that full width. Clamping
+         * against it produced maxLeft = viewport - bandWidth, which dragged every
+         * restored position back toward the left edge, so the bar appeared not to
+         * remember where it had been put.
+         */
+        dock.classList.add(
+            'tf-hud-dock--free'
+        );
+
+        dock.style.left =
+            `${Math.round(left)}px`;
+
+        dock.style.top =
+            `${Math.round(top)}px`;
+
         const clamped =
             clampHudDockPosition(
                 dock,
                 left,
                 top
             );
-
-        dock.classList.add(
-            'tf-hud-dock--free'
-        );
 
         dock.style.left =
             `${Math.round(clamped.left)}px`;
